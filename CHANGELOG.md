@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6] - 2026-04-18
+
+### Added
+- TOML configuration support:
+  - Global config at `~/.deepagents/config.toml` (shared with upstream deepagents CLI)
+  - Project config at `deepagents.toml` (walks up from cwd)
+  - Project overrides global; CLI args and env vars override both
+- `[ui]` table: `verbose`, `async_mode`, `stream_mode`
+- `[agent]` table: `spec`, `graph_name`, `workspace_root`
+- `[configurable]` table seeds LangGraph `RunnableConfig.configurable`
+- `/config` slash command now shows resolved values and TOML source files
+
+### Removed
+- `--config` / `-c` CLI flag (use TOML files instead)
+- `DEEPAGENT_CONFIG` environment variable (use TOML files instead)
+
+### Breaking
+- JSON config via `--config` / `DEEPAGENT_CONFIG` is removed. Migrate inline
+  JSON into `~/.deepagents/config.toml` or a project `deepagents.toml`.
+
 ## [0.1.5] - 2026-02-02
 
 ### Added
