@@ -72,8 +72,36 @@ deepagent-code
 # Working directory
 export DEEPAGENT_WORKSPACE_ROOT="/path/to/workspace"
 
-# Configuration
-export DEEPAGENT_CONFIG='{"configurable": {"thread_id": "1"}}'
+# Stream mode (updates or values)
+export DEEPAGENT_STREAM_MODE="updates"
+```
+
+## Configuration Files
+
+`deepagent-code` reads TOML config from two locations and merges them
+(project overrides global):
+
+- **Global**: `~/.deepagents/config.toml` (shared with the upstream
+  `deepagents` CLI)
+- **Project**: `deepagents.toml` in the current directory or any ancestor
+
+Precedence: CLI args > env vars > project TOML > global TOML > defaults.
+
+Example `deepagents.toml`:
+
+```toml
+[agent]
+spec = "my_agent.py:graph"
+workspace_root = "."
+
+[ui]
+verbose = true
+async_mode = false
+stream_mode = "updates"
+
+[configurable]
+# seeds LangGraph RunnableConfig.configurable
+thread_id = "my-thread"
 ```
 
 ## CLI Options
@@ -88,9 +116,9 @@ Options:
   -a, --agent TEXT                Agent spec (path/to/file.py:graph or module:graph)
   -g, --graph-name TEXT           Graph variable name (default: "graph")
   -f, --file PATH                 Read message from a file (any extension)
-  -c, --config TEXT               Config JSON or file path
   --interactive/--no-interactive  Handle interrupts (default: interactive)
   --async-mode/--sync-mode        Async streaming (default: sync)
+  --stream-mode TEXT              Stream mode (updates or values)
   -v, --verbose                   Verbose output
 ```
 

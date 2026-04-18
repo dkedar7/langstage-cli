@@ -37,6 +37,7 @@ from deepagent_code.utils import (
     stream_graph_updates,
     astream_graph_updates,
 )
+from deepagent_code import config as config_module
 
 
 # ANSI color codes (matching nanocode style)
@@ -54,7 +55,7 @@ SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇",
 
 
 # Version info
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 
 # Slash command registry
@@ -1000,40 +1001,50 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
     config = context.get("config", {})
 
     if not args:
-        # Show current config
         print(f"\n{BOLD}{BRIGHT_CYAN}Configuration{RESET}")
         print(f"{DIM}{'─' * 30}{RESET}")
-        for key, value in config.items():
-            if isinstance(value, dict):
-                print(f"  {CYAN}{key}:{RESET}")
-                for k, v in value.items():
-                    # Truncate long values
-                    v_str = str(v)
-                    if len(v_str) > 30:
-                        v_str = v_str[:30] + "..."
-                    print(f"    {DIM}{k}:{RESET} {v_str}")
-            else:
-                print(f"  {CYAN}{key}:{RESET} {value}")
+
+        sources = config.get("_toml_sources", [])
+        if sources:
+            print(f"  {DIM}TOML sources:{RESET}")
+            for src in sources:
+                print(f"    {DIM}- {src}{RESET}")
+        else:
+            print(f"  {DIM}TOML sources:{RESET} {DIM}(none — using defaults){RESET}")
+
+        print(f"  {DIM}Resolved settings:{RESET}")
+        print(f"    {CYAN}verbose:{RESET}     {context.get('verbose', False)}")
+        print(f"    {CYAN}async_mode:{RESET}  {context.get('use_async', False)}")
+        print(f"    {CYAN}stream_mode:{RESET} {context.get('stream_mode', 'updates')}")
+
+        configurable = config.get("configurable", {})
+        if configurable:
+            print(f"  {DIM}LangGraph configurable:{RESET}")
+            for k, v in configurable.items():
+                v_str = str(v)
+                if len(v_str) > 50:
+                    v_str = v_str[:50] + "..."
+                print(f"    {CYAN}{k}:{RESET} {v_str}")
         print()
     else:
         parts = args.split(maxsplit=1)
         if len(parts) == 1:
-            # Show specific config key
             key = parts[0]
-            if key in config:
-                print(f"\n{CYAN}{key}:{RESET} {config[key]}\n")
-            elif "configurable" in config and key in config["configurable"]:
-                print(f"\n{CYAN}{key}:{RESET} {config['configurable'][key]}\n")
+            configurable = config.get("configurable", {})
+            if key in configurable:
+                print(f"\n{CYAN}{key}:{RESET} {configurable[key]}\n")
+            elif key in ("verbose", "async_mode", "stream_mode"):
+                ctx_key = "use_async" if key == "async_mode" else key
+                print(f"\n{CYAN}{key}:{RESET} {context.get(ctx_key)}\n")
             else:
                 print(f"{YELLOW}Unknown config key: {key}{RESET}")
         else:
-            # Set config value
             key, value = parts
             if key == "verbose":
                 context["verbose"] = value.lower() in ("true", "1", "on", "yes")
                 print(f"{GREEN}✓ Set verbose = {context['verbose']}{RESET}")
             else:
-                print(f"{YELLOW}Cannot modify {key} at runtime{RESET}")
+                print(f"{YELLOW}Cannot modify {key} at runtime (edit deepagents.toml){RESET}")
     return None
 
 
@@ -1349,11 +1360,6 @@ def run_conversation_loop(
     help="Read input message from a file (any extension)",
 )
 @click.option(
-    "--config",
-    "-c",
-    help="Configuration JSON string or path to JSON file",
-)
-@click.option(
     "--interactive/--no-interactive",
     default=True,
     help="Handle interrupts interactively (default: True)",
@@ -1361,7 +1367,7 @@ def run_conversation_loop(
 @click.option(
     "--async-mode/--sync-mode",
     "use_async",
-    default=False,
+    default=None,
     help="Use async streaming (default: sync)",
 )
 @click.option(
@@ -1372,6 +1378,7 @@ def run_conversation_loop(
     "--verbose",
     "-v",
     is_flag=True,
+    default=None,
     help="Show verbose output including node names",
 )
 def main(
@@ -1379,11 +1386,10 @@ def main(
     agent_spec: Optional[str],
     graph_name: Optional[str],
     prompt_file: Optional[str],
-    config: Optional[str],
     interactive: bool,
-    use_async: bool,
+    use_async: Optional[bool],
     stream_mode: Optional[str],
-    verbose: bool,
+    verbose: Optional[bool],
 ):
     """
     Run a LangGraph agent from the command line.
@@ -1402,10 +1408,11 @@ def main(
     \b
     - DEEPAGENT_SPEC: Agent location (same formats as above)
     - DEEPAGENT_WORKSPACE_ROOT: Working directory for the agent
-    - DEEPAGENT_CONFIG: Configuration JSON string or path to JSON file
     - DEEPAGENT_STREAM_MODE: Stream mode for LangGraph (updates or values)
 
-    Command-line arguments override environment variables.
+    Reads ~/.deepagents/config.toml (global) and deepagents.toml (project,
+    walks up from cwd). Precedence: CLI args > env vars > project TOML >
+    global TOML > built-in defaults.
 
     \b
     Examples:
@@ -1431,15 +1438,44 @@ def main(
                 print(f"{RED}⏺ Error reading file '{prompt_file}': {e}{RESET}")
                 sys.exit(1)
 
-        # Get environment variables (DEEPAGENT_SPEC preferred, DEEPAGENT_AGENT_SPEC for backwards compat)
-        env_agent_spec = os.getenv('DEEPAGENT_SPEC') or os.getenv('DEEPAGENT_AGENT_SPEC')
-        env_workspace_root = os.getenv('DEEPAGENT_WORKSPACE_ROOT')
-        env_config = os.getenv('DEEPAGENT_CONFIG')
-        env_stream_mode = os.getenv('DEEPAGENT_STREAM_MODE', 'updates')
+        # Load TOML configuration (global + project, merged)
+        try:
+            toml_config, toml_sources = config_module.load_config()
+        except config_module.ConfigError as e:
+            print(f"{RED}⏺ {e}{RESET}")
+            sys.exit(1)
 
-        # Determine which spec to use (CLI arg > env var > default)
-        final_spec = agent_spec or env_agent_spec
-        default_graph_name = graph_name or "graph"
+        # Resolve settings with precedence: CLI > env > TOML > default
+        final_spec = config_module.resolve(
+            toml_config, "agent.spec",
+            cli_value=agent_spec,
+            env_var="DEEPAGENT_SPEC",
+        ) or os.getenv("DEEPAGENT_AGENT_SPEC")  # legacy env var
+        final_graph_name_default = config_module.resolve(
+            toml_config, "agent.graph_name",
+            cli_value=graph_name,
+            default="graph",
+        )
+        workspace_root = config_module.resolve(
+            toml_config, "agent.workspace_root",
+            env_var="DEEPAGENT_WORKSPACE_ROOT",
+        )
+        final_stream_mode = config_module.resolve(
+            toml_config, "ui.stream_mode",
+            cli_value=stream_mode,
+            env_var="DEEPAGENT_STREAM_MODE",
+            default="updates",
+        )
+        use_async = config_module.resolve(
+            toml_config, "ui.async_mode",
+            cli_value=use_async,
+            default=False,
+        )
+        verbose = config_module.resolve(
+            toml_config, "ui.verbose",
+            cli_value=verbose,
+            default=False,
+        )
 
         # If no spec provided, try the default agent
         if not final_spec:
@@ -1455,44 +1491,28 @@ def main(
                 sys.exit(1)
 
         # Change to workspace root if specified
-        if env_workspace_root:
-            workspace_path = Path(env_workspace_root).resolve()
+        if workspace_root:
+            workspace_path = Path(workspace_root).expanduser().resolve()
             if workspace_path.exists():
                 os.chdir(workspace_path)
 
         # Load the graph with a spinner
         spinner = Spinner("Loading agent")
         spinner.start()
-        graph, final_graph_name = load_graph(final_spec, default_graph_name)
+        graph, final_graph_name = load_graph(final_spec, final_graph_name_default)
         spinner.stop()
         print(f"{GREEN}✓{RESET} {DIM}Loaded {final_spec}{RESET}")
 
-        # Parse config
-        config_dict = None
-        config_source = config or env_config
-
-        if config_source:
-            config_path = Path(config_source)
-            if config_path.exists():
-                with open(config_path) as f:
-                    config_dict = json.load(f)
-            else:
-                try:
-                    config_dict = json.loads(config_source)
-                except json.JSONDecodeError as e:
-                    print(f"{RED}⏺ Invalid config JSON: {e}{RESET}")
-                    sys.exit(1)
-
-        # Get stream mode
-        final_stream_mode = stream_mode or env_stream_mode
-
-        # Ensure config has a thread_id for checkpointer support
-        if config_dict is None:
-            config_dict = {}
-        if "configurable" not in config_dict:
-            config_dict["configurable"] = {}
+        # Seed LangGraph RunnableConfig from TOML [configurable] table if present
+        config_dict: Dict[str, Any] = {"configurable": {}}
+        toml_configurable = config_module.get(toml_config, "configurable")
+        if isinstance(toml_configurable, dict):
+            config_dict["configurable"].update(toml_configurable)
         if "thread_id" not in config_dict["configurable"]:
             config_dict["configurable"]["thread_id"] = str(uuid.uuid4())
+
+        # Expose TOML sources to slash commands via the config dict
+        config_dict["_toml_sources"] = [str(p) for p in toml_sources]
 
         # Extract agent name and description from graph object
         agent_name = get_agent_name(graph)
