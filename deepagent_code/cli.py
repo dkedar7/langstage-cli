@@ -32,10 +32,11 @@ try:
 except ImportError:
     HAS_READLINE = False
 
-from deepagent_code.utils import (
+from langgraph_stream_parser import (
     prepare_agent_input,
     stream_graph_updates,
     astream_graph_updates,
+    load_agent_spec,
 )
 from deepagent_code import config as config_module
 
@@ -55,7 +56,7 @@ SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇",
 
 
 # Version info
-__version__ = "0.1.6"
+__version__ = "0.2.0"
 
 
 # Slash command registry
@@ -432,78 +433,14 @@ def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
     return file_path, variable_name
 
 
-def load_graph_from_file(file_path: str, graph_name: str = "graph"):
-    """
-    Dynamically load a LangGraph graph from a Python file.
-
-    Args:
-        file_path: Path to the Python file containing the graph
-        graph_name: Name of the graph variable (default: "graph")
-
-    Returns:
-        The loaded graph object
-
-    Raises:
-        FileNotFoundError: If the file doesn't exist
-        AttributeError: If the graph variable doesn't exist in the module
-        Exception: For other loading errors
-    """
-    file_path = Path(file_path).resolve()
-
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-    # Load the module
-    spec = importlib.util.spec_from_file_location("graph_module", file_path)
-    if spec is None or spec.loader is None:
-        raise Exception(f"Could not load module from {file_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["graph_module"] = module
-    spec.loader.exec_module(module)
-
-    # Get the graph object
-    if not hasattr(module, graph_name):
-        raise AttributeError(
-            f"Module does not have a '{graph_name}' variable. "
-            f"Available: {', '.join(dir(module))}"
-        )
-
-    graph = getattr(module, graph_name)
-    return graph
-
-
-def load_graph_from_module(module_path: str, graph_name: str = "graph"):
-    """
-    Dynamically load a LangGraph graph from a Python module path.
-
-    Args:
-        module_path: Dotted module path (e.g., "mypackage.agents.chatbot")
-        graph_name: Name of the graph variable (default: "graph")
-
-    Returns:
-        The loaded graph object
-
-    Raises:
-        ModuleNotFoundError: If the module doesn't exist
-        AttributeError: If the graph variable doesn't exist in the module
-    """
-    import importlib
-    module = importlib.import_module(module_path)
-
-    if not hasattr(module, graph_name):
-        raise AttributeError(
-            f"Module '{module_path}' does not have a '{graph_name}' variable. "
-            f"Available: {', '.join(dir(module))}"
-        )
-
-    graph = getattr(module, graph_name)
-    return graph
-
-
 def load_graph(spec: str, default_graph_name: str = "graph"):
     """
     Load a graph from either a file path or module path.
+
+    Delegates the actual import to the shared
+    ``langgraph_stream_parser.host.load_agent_spec`` loader, while preserving
+    this CLI's convenience of a bare path (no ``:name``), which defaults to
+    ``default_graph_name``.
 
     Supports formats:
         - path/to/file.py (uses default_graph_name)
@@ -516,30 +453,21 @@ def load_graph(spec: str, default_graph_name: str = "graph"):
         default_graph_name: Graph name to use if not specified in spec
 
     Returns:
-        The loaded graph object
+        Tuple of (graph, graph_name).
     """
-    # Parse the spec to extract graph name if present
+    path_or_module = spec
+    graph_name = default_graph_name
     if ':' in spec:
-        path_or_module, graph_name = spec.rsplit(':', 1)
-        if not graph_name:
-            graph_name = default_graph_name
-    else:
-        path_or_module = spec
-        graph_name = default_graph_name
+        head, _, tail = spec.rpartition(':')
+        # Only treat the trailing ':token' as a graph name if it looks like one
+        # — i.e. it has no path separators. This avoids mistaking a Windows
+        # drive-letter colon (e.g. 'C:\path\agent.py') for a name suffix.
+        if tail and '/' not in tail and '\\' not in tail:
+            path_or_module = head
+            graph_name = tail or default_graph_name
 
-    # Determine if it's a file path or module path
-    # File paths end with .py or contain path separators
-    is_file_path = (
-        path_or_module.endswith('.py') or
-        '/' in path_or_module or
-        '\\' in path_or_module or
-        Path(path_or_module).exists()
-    )
-
-    if is_file_path:
-        return load_graph_from_file(path_or_module, graph_name), graph_name
-    else:
-        return load_graph_from_module(path_or_module, graph_name), graph_name
+    graph = load_agent_spec(f"{path_or_module}:{graph_name}")
+    return graph, graph_name
 
 
 def get_tool_arg_preview(args: Dict[str, Any]) -> str:
