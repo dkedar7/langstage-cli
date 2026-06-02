@@ -1,85 +1,42 @@
-"""TOML configuration loader for deepagent-code.
+"""Configuration for deepagent-code.
 
-Reads two files and merges them (project wins on conflict):
-- ~/.deepagents/config.toml — shared with the upstream deepagents CLI
-- deepagents.toml — nearest ancestor of cwd, per-project overrides
+Shares the TOML loader and the ``DEEPAGENT_*`` schema with the rest of the
+deep-agent family via ``langgraph_stream_parser.host``: global
+``~/.deepagents/config.toml`` + project ``deepagents.toml`` (merged), then env
+vars, then CLI overrides.
+
+``CodeConfig`` is deepagent-code's view of that shared config. ``load_config`` /
+``get`` / ``resolve`` remain for the ``[configurable]`` passthrough and ad-hoc
+lookups.
 """
-from __future__ import annotations
-
 import os
 import tomllib
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, List, Optional, Tuple
 
-
-GLOBAL_CONFIG_PATH = Path.home() / ".deepagents" / "config.toml"
-PROJECT_CONFIG_NAME = "deepagents.toml"
+from langgraph_stream_parser.host import HostConfig, load_toml_config
 
 
 class ConfigError(Exception):
     """Raised when a config file exists but cannot be parsed."""
 
 
-def global_config_path() -> Path:
-    override = os.getenv("DEEPAGENTS_CONFIG_HOME")
-    if override:
-        return Path(override).expanduser() / "config.toml"
-    return GLOBAL_CONFIG_PATH
+def load_config(start: Optional[Path] = None) -> Tuple[dict, List[Path]]:
+    """Load global + project ``deepagents.toml``, merged (project wins).
 
-
-def find_project_config(start: Optional[Path] = None) -> Optional[Path]:
-    """Walk up from `start` (or cwd) looking for deepagents.toml."""
-    here = (start or Path.cwd()).resolve()
-    for directory in (here, *here.parents):
-        candidate = directory / PROJECT_CONFIG_NAME
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-def _read_toml(path: Path) -> Dict[str, Any]:
+    Delegates to the shared loader so every deep-agent tool reads the same
+    files with the same precedence. Returns ``(config, sources_used)``.
+    """
     try:
-        with path.open("rb") as f:
-            return tomllib.load(f)
+        return load_toml_config(start)
     except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"Invalid TOML in {path}: {e}") from e
+        raise ConfigError(f"Invalid TOML: {e}") from e
 
 
-def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
-    """Recursively merge overlay into base. Overlay wins on leaf conflicts."""
-    result = dict(base)
-    for key, value in overlay.items():
-        if (
-            key in result
-            and isinstance(result[key], dict)
-            and isinstance(value, dict)
-        ):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def load_config(start: Optional[Path] = None) -> Tuple[Dict[str, Any], List[Path]]:
-    """Load global + project TOML, merged. Returns (config, sources_used)."""
-    sources: List[Path] = []
-    merged: Dict[str, Any] = {}
-
-    gpath = global_config_path()
-    if gpath.exists():
-        merged = _deep_merge(merged, _read_toml(gpath))
-        sources.append(gpath)
-
-    ppath = find_project_config(start)
-    if ppath is not None:
-        merged = _deep_merge(merged, _read_toml(ppath))
-        sources.append(ppath)
-
-    return merged, sources
-
-
-def get(config: Dict[str, Any], dotted_key: str, default: Any = None) -> Any:
-    """Fetch a nested value via dotted path, e.g. 'ui.verbose'."""
+def get(config: dict, dotted_key: str, default: Any = None) -> Any:
+    """Fetch a nested value via dotted path, e.g. ``'ui.verbose'``."""
     node: Any = config
     for part in dotted_key.split("."):
         if not isinstance(node, dict) or part not in node:
@@ -89,14 +46,18 @@ def get(config: Dict[str, Any], dotted_key: str, default: Any = None) -> Any:
 
 
 def resolve(
-    config: Dict[str, Any],
+    config: dict,
     dotted_key: str,
     cli_value: Any = None,
     env_var: Optional[str] = None,
     default: Any = None,
     cast: Optional[type] = None,
 ) -> Any:
-    """Resolve a value with precedence: CLI > env > TOML > default."""
+    """Resolve a single value with precedence: CLI > env > TOML > default.
+
+    Retained for ad-hoc lookups (e.g. the ``[configurable]`` table); the
+    standard keys resolve via :class:`CodeConfig`.
+    """
     if cli_value is not None:
         return cli_value
     if env_var:
@@ -111,3 +72,42 @@ def resolve(
     if toml_value is not None:
         return toml_value
     return default
+
+
+@dataclass
+class CodeConfig(HostConfig):
+    """deepagent-code's view of the shared config.
+
+    Adds the CLI-specific keys on top of ``HostConfig``'s shared ones, resolved
+    through the same ``defaults < deepagents.toml < DEEPAGENT_* env <
+    overrides`` chain. ``DEEPAGENT_AGENT_SPEC`` is canonical;
+    ``DEEPAGENT_SPEC`` is a deprecated alias.
+    """
+
+    stream_mode: str = "updates"
+    graph_name: str = "graph"
+    verbose: bool = False
+    async_mode: bool = False
+
+    _ENV: ClassVar[dict] = {
+        "stream_mode": ("DEEPAGENT_STREAM_MODE", str),
+    }
+    _TOML: ClassVar[dict] = {
+        "stream_mode": "ui.stream_mode",
+        "graph_name": "agent.graph_name",
+        "verbose": "ui.verbose",
+        "async_mode": "ui.async_mode",
+    }
+
+    @classmethod
+    def resolve(cls, *, env: Optional[dict] = None, **kwargs: Any) -> "CodeConfig":
+        env = dict(os.environ if env is None else env)
+        # Reconcile the legacy spec var — DEEPAGENT_AGENT_SPEC is canonical.
+        if not env.get("DEEPAGENT_AGENT_SPEC") and env.get("DEEPAGENT_SPEC"):
+            env["DEEPAGENT_AGENT_SPEC"] = env["DEEPAGENT_SPEC"]
+            warnings.warn(
+                "DEEPAGENT_SPEC is deprecated; use DEEPAGENT_AGENT_SPEC.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return super().resolve(env=env, **kwargs)

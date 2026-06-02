@@ -940,10 +940,11 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
         else:
             print(f"  {DIM}TOML sources:{RESET} {DIM}(none — using defaults){RESET}")
 
-        print(f"  {DIM}Resolved settings:{RESET}")
-        print(f"    {CYAN}verbose:{RESET}     {context.get('verbose', False)}")
-        print(f"    {CYAN}async_mode:{RESET}  {context.get('use_async', False)}")
-        print(f"    {CYAN}stream_mode:{RESET} {context.get('stream_mode', 'updates')}")
+        # Full resolved view: each value, where it came from, and the env var
+        # / TOML key that sets it.
+        from deepagent_code.config import CodeConfig
+        for line in CodeConfig.resolve().describe().splitlines():
+            print(f"  {line}")
 
         configurable = config.get("configurable", {})
         if configurable:
@@ -1334,7 +1335,8 @@ def main(
     Supports environment variables for configuration:
 
     \b
-    - DEEPAGENT_SPEC: Agent location (same formats as above)
+    - DEEPAGENT_AGENT_SPEC: Agent location (same formats as above).
+      (DEEPAGENT_SPEC is still accepted as a deprecated alias.)
     - DEEPAGENT_WORKSPACE_ROOT: Working directory for the agent
     - DEEPAGENT_STREAM_MODE: Stream mode for LangGraph (updates or values)
 
@@ -1373,36 +1375,31 @@ def main(
             print(f"{RED}⏺ {e}{RESET}")
             sys.exit(1)
 
-        # Resolve settings with precedence: CLI > env > TOML > default
-        final_spec = config_module.resolve(
-            toml_config, "agent.spec",
-            cli_value=agent_spec,
-            env_var="DEEPAGENT_SPEC",
-        ) or os.getenv("DEEPAGENT_AGENT_SPEC")  # legacy env var
-        final_graph_name_default = config_module.resolve(
-            toml_config, "agent.graph_name",
-            cli_value=graph_name,
-            default="graph",
+        # Resolve all standard settings through the shared chain in one shot:
+        # CLI overrides > DEEPAGENT_* env > deepagents.toml > defaults.
+        # (DEEPAGENT_AGENT_SPEC is canonical; DEEPAGENT_SPEC is a deprecated alias.)
+        cfg = config_module.CodeConfig.resolve(
+            toml_start=Path.cwd(),
+            overrides={
+                "agent_spec": agent_spec,
+                "graph_name": graph_name,
+                "stream_mode": stream_mode,
+                # bool flags only override when actually passed; otherwise fall
+                # back to TOML/env/default.
+                "async_mode": True if use_async else None,
+                "verbose": True if verbose else None,
+            },
         )
-        workspace_root = config_module.resolve(
-            toml_config, "agent.workspace_root",
-            env_var="DEEPAGENT_WORKSPACE_ROOT",
-        )
-        final_stream_mode = config_module.resolve(
-            toml_config, "ui.stream_mode",
-            cli_value=stream_mode,
-            env_var="DEEPAGENT_STREAM_MODE",
-            default="updates",
-        )
-        use_async = config_module.resolve(
-            toml_config, "ui.async_mode",
-            cli_value=use_async,
-            default=False,
-        )
-        verbose = config_module.resolve(
-            toml_config, "ui.verbose",
-            cli_value=verbose,
-            default=False,
+        final_spec = cfg.agent_spec
+        final_graph_name_default = cfg.graph_name
+        final_stream_mode = cfg.stream_mode
+        use_async = cfg.async_mode
+        verbose = cfg.verbose
+        # Only change directory when a workspace root was actually configured.
+        workspace_root = (
+            cfg.workspace_root
+            if cfg.sources.get("workspace_root") != "default"
+            else None
         )
 
         # If no spec provided, try the default agent
@@ -1415,7 +1412,7 @@ def main(
                 print(f"\n{DIM}Usage:{RESET}")
                 print(f"  deepagent-code path/to/agent.py:graph")
                 print(f"  deepagent-code mypackage.module:agent")
-                print(f"\n{DIM}Or set DEEPAGENT_SPEC environment variable{RESET}")
+                print(f"\n{DIM}Or set DEEPAGENT_AGENT_SPEC environment variable{RESET}")
                 sys.exit(1)
 
         # Change to workspace root if specified
