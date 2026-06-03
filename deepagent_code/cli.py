@@ -2,8 +2,8 @@
 CLI for running arbitrary LangGraph agents from the terminal.
 Styled after Claude Code / nanocode.
 """
+
 import asyncio
-import importlib.util
 import json
 import os
 import re
@@ -15,22 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Platform-specific imports for keyboard input
-IS_WINDOWS = sys.platform == "win32"
-if IS_WINDOWS:
-    import msvcrt
-else:
-    import termios
-    import tty
-
 import click
-
-# Try to import readline for tab completion (not available on all platforms)
-try:
-    import readline
-    HAS_READLINE = True
-except ImportError:
-    HAS_READLINE = False
 
 from langgraph_stream_parser import (
     prepare_agent_input,
@@ -39,6 +24,22 @@ from langgraph_stream_parser import (
     load_agent_spec,
 )
 from deepagent_code import config as config_module
+
+# Platform-specific imports for keyboard input
+IS_WINDOWS = sys.platform == "win32"
+if IS_WINDOWS:
+    import msvcrt
+else:
+    import termios
+    import tty
+
+# Try to import readline for tab completion (not available on all platforms)
+try:
+    import readline
+
+    HAS_READLINE = True
+except ImportError:
+    HAS_READLINE = False
 
 
 # ANSI color codes (matching nanocode style)
@@ -154,6 +155,7 @@ def register_command(
     usage: Optional[str] = None,
 ):
     """Decorator to register a slash command handler."""
+
     def decorator(func):
         command = SlashCommand(
             name=name,
@@ -164,6 +166,7 @@ def register_command(
         )
         command_registry.register(command)
         return func
+
     return decorator
 
 
@@ -183,7 +186,11 @@ class Spinner:
             frame = SPINNER_FRAMES[self.frame_idx % len(SPINNER_FRAMES)]
             elapsed = time.time() - self.start_time
             elapsed_str = f"{int(elapsed)}s"
-            print(f"\r{CYAN}{frame}{RESET} {DIM}{self.message}... {elapsed_str}{RESET}", end="", flush=True)
+            print(
+                f"\r{CYAN}{frame}{RESET} {DIM}{self.message}... {elapsed_str}{RESET}",
+                end="",
+                flush=True,
+            )
             self.frame_idx += 1
             time.sleep(0.08)
 
@@ -246,13 +253,13 @@ def print_goodbye():
 def get_agent_name(graph) -> str:
     """Extract agent name from graph object, defaulting to 'AgentCode'."""
     # Try common attribute names for agent/graph name
-    for attr in ('name', 'agent_name', '_name', '__name__'):
+    for attr in ("name", "agent_name", "_name", "__name__"):
         if hasattr(graph, attr):
             name = getattr(graph, attr)
             if name and isinstance(name, str):
                 return name
     # Check if it's a compiled graph with a name in builder
-    if hasattr(graph, 'builder') and hasattr(graph.builder, 'name'):
+    if hasattr(graph, "builder") and hasattr(graph.builder, "name"):
         name = graph.builder.name
         if name and isinstance(name, str):
             return name
@@ -262,13 +269,13 @@ def get_agent_name(graph) -> str:
 def get_agent_description(graph) -> Optional[str]:
     """Extract agent description from graph object, if available."""
     # Try common attribute names for agent description
-    for attr in ('description', 'agent_description', '_description', '__doc__'):
+    for attr in ("description", "agent_description", "_description", "__doc__"):
         if hasattr(graph, attr):
             desc = getattr(graph, attr)
             if desc and isinstance(desc, str) and desc.strip():
                 return desc.strip()
     # Check if it's a compiled graph with a description in builder
-    if hasattr(graph, 'builder') and hasattr(graph.builder, 'description'):
+    if hasattr(graph, "builder") and hasattr(graph.builder, "description"):
         desc = graph.builder.description
         if desc and isinstance(desc, str) and desc.strip():
             return desc.strip()
@@ -283,59 +290,59 @@ def text_to_ascii_art(text: str) -> List[str]:
     """
     # Clean 3-line block font - each char is exactly 3 wide
     FONT = {
-        'A': ['▄▀▄', '█▀█', '▀ ▀'],
-        'B': ['█▀▄', '█▀▄', '▀▀▀'],
-        'C': ['▄▀▀', '█  ', '▀▀▀'],
-        'D': ['█▀▄', '█ █', '▀▀▀'],
-        'E': ['█▀▀', '█▀▀', '▀▀▀'],
-        'F': ['█▀▀', '█▀▀', '▀  '],
-        'G': ['▄▀▀', '█▀█', '▀▀▀'],
-        'H': ['█ █', '█▀█', '▀ ▀'],
-        'I': ['▀█▀', ' █ ', '▀▀▀'],
-        'J': ['▀▀█', '  █', '▀▀▀'],
-        'K': ['█ █', '█▀▄', '▀ ▀'],
-        'L': ['█  ', '█  ', '▀▀▀'],
-        'M': ['█▄█', '█ █', '▀ ▀'],
-        'N': ['█▀█', '█ █', '▀ ▀'],
-        'O': ['▄▀▄', '█ █', '▀▀▀'],
-        'P': ['█▀▄', '█▀▀', '▀  '],
-        'Q': ['▄▀▄', '█ █', '▀▀█'],
-        'R': ['█▀▄', '█▀▄', '▀ ▀'],
-        'S': ['▄▀▀', '▀▀▄', '▀▀▀'],
-        'T': ['▀█▀', ' █ ', ' ▀ '],
-        'U': ['█ █', '█ █', '▀▀▀'],
-        'V': ['█ █', '█ █', ' ▀ '],
-        'W': ['█ █', '█▀█', '▀ ▀'],
-        'X': ['▀▄▀', ' █ ', '▀ ▀'],
-        'Y': ['█ █', ' █ ', ' ▀ '],
-        'Z': ['▀▀█', ' █ ', '█▀▀'],
-        '0': ['▄▀▄', '█ █', '▀▀▀'],
-        '1': ['▄█ ', ' █ ', '▀▀▀'],
-        '2': ['▀▀█', '▄▀▀', '▀▀▀'],
-        '3': ['▀▀█', ' ▀█', '▀▀▀'],
-        '4': ['█ █', '▀▀█', '  ▀'],
-        '5': ['█▀▀', '▀▀▄', '▀▀▀'],
-        '6': ['▄▀▀', '█▀█', '▀▀▀'],
-        '7': ['▀▀█', '  █', '  ▀'],
-        '8': ['▄▀▄', '█▀█', '▀▀▀'],
-        '9': ['▄▀█', '▀▀█', '▀▀▀'],
-        ' ': ['   ', '   ', '   '],
-        '-': ['   ', '▀▀▀', '   '],
-        '_': ['   ', '   ', '▀▀▀'],
-        '.': ['   ', '   ', ' ▀ '],
+        "A": ["▄▀▄", "█▀█", "▀ ▀"],
+        "B": ["█▀▄", "█▀▄", "▀▀▀"],
+        "C": ["▄▀▀", "█  ", "▀▀▀"],
+        "D": ["█▀▄", "█ █", "▀▀▀"],
+        "E": ["█▀▀", "█▀▀", "▀▀▀"],
+        "F": ["█▀▀", "█▀▀", "▀  "],
+        "G": ["▄▀▀", "█▀█", "▀▀▀"],
+        "H": ["█ █", "█▀█", "▀ ▀"],
+        "I": ["▀█▀", " █ ", "▀▀▀"],
+        "J": ["▀▀█", "  █", "▀▀▀"],
+        "K": ["█ █", "█▀▄", "▀ ▀"],
+        "L": ["█  ", "█  ", "▀▀▀"],
+        "M": ["█▄█", "█ █", "▀ ▀"],
+        "N": ["█▀█", "█ █", "▀ ▀"],
+        "O": ["▄▀▄", "█ █", "▀▀▀"],
+        "P": ["█▀▄", "█▀▀", "▀  "],
+        "Q": ["▄▀▄", "█ █", "▀▀█"],
+        "R": ["█▀▄", "█▀▄", "▀ ▀"],
+        "S": ["▄▀▀", "▀▀▄", "▀▀▀"],
+        "T": ["▀█▀", " █ ", " ▀ "],
+        "U": ["█ █", "█ █", "▀▀▀"],
+        "V": ["█ █", "█ █", " ▀ "],
+        "W": ["█ █", "█▀█", "▀ ▀"],
+        "X": ["▀▄▀", " █ ", "▀ ▀"],
+        "Y": ["█ █", " █ ", " ▀ "],
+        "Z": ["▀▀█", " █ ", "█▀▀"],
+        "0": ["▄▀▄", "█ █", "▀▀▀"],
+        "1": ["▄█ ", " █ ", "▀▀▀"],
+        "2": ["▀▀█", "▄▀▀", "▀▀▀"],
+        "3": ["▀▀█", " ▀█", "▀▀▀"],
+        "4": ["█ █", "▀▀█", "  ▀"],
+        "5": ["█▀▀", "▀▀▄", "▀▀▀"],
+        "6": ["▄▀▀", "█▀█", "▀▀▀"],
+        "7": ["▀▀█", "  █", "  ▀"],
+        "8": ["▄▀▄", "█▀█", "▀▀▀"],
+        "9": ["▄▀█", "▀▀█", "▀▀▀"],
+        " ": ["   ", "   ", "   "],
+        "-": ["   ", "▀▀▀", "   "],
+        "_": ["   ", "   ", "▀▀▀"],
+        ".": ["   ", "   ", " ▀ "],
     }
 
     # Default char for unknown characters
-    DEFAULT = ['   ', ' █ ', '   ']
+    DEFAULT = ["   ", " █ ", "   "]
 
-    lines = ['', '', '']
+    lines = ["", "", ""]
     for char in text.upper():
         char_art = FONT.get(char, DEFAULT)
         for i in range(3):
-            lines[i] += char_art[i] + ' '
+            lines[i] += char_art[i] + " "
 
     # Remove only the final trailing space we added (not internal spaces from chars like T, P)
-    return [line[:-1] if line.endswith(' ') else line for line in lines]
+    return [line[:-1] if line.endswith(" ") else line for line in lines]
 
 
 def print_header_box(agent_name: str, cwd: str, description: Optional[str] = None):
@@ -359,7 +366,7 @@ def print_header_box(agent_name: str, cwd: str, description: Optional[str] = Non
     # Build cwd line with label
     cwd_label = "cwd: "
     max_cwd_len = inner_width - len(cwd_label)
-    cwd_display = cwd if len(cwd) <= max_cwd_len else "..." + cwd[-(max_cwd_len - 3):]
+    cwd_display = cwd if len(cwd) <= max_cwd_len else "..." + cwd[-(max_cwd_len - 3) :]
     cwd_with_label = f"{cwd_label}{cwd_display}"
     cwd_line = cwd_with_label.center(inner_width)
 
@@ -371,16 +378,24 @@ def print_header_box(agent_name: str, cwd: str, description: Optional[str] = Non
         # Print ASCII art lines centered
         for line in ascii_lines:
             centered_line = line.center(inner_width)
-            print(f"{BRIGHT_CYAN}{V}{RESET} {BOLD}{BRIGHT_CYAN}{centered_line}{RESET} {BRIGHT_CYAN}{V}{RESET}")
+            print(
+                f"{BRIGHT_CYAN}{V}{RESET} {BOLD}{BRIGHT_CYAN}{centered_line}{RESET} {BRIGHT_CYAN}{V}{RESET}"
+            )
     else:
         # Fall back to plain text if ASCII art doesn't fit
         title_line = agent_name.center(inner_width)
-        print(f"{BRIGHT_CYAN}{V}{RESET} {BOLD}{BRIGHT_CYAN}{title_line}{RESET} {BRIGHT_CYAN}{V}{RESET}")
+        print(
+            f"{BRIGHT_CYAN}{V}{RESET} {BOLD}{BRIGHT_CYAN}{title_line}{RESET} {BRIGHT_CYAN}{V}{RESET}"
+        )
 
     # Print description line if available
     if description:
         # Truncate description if too long
-        desc_display = description if len(description) <= inner_width else description[:inner_width - 3] + "..."
+        desc_display = (
+            description
+            if len(description) <= inner_width
+            else description[: inner_width - 3] + "..."
+        )
         desc_line = desc_display.center(inner_width)
         print(f"{CYAN}{V}{RESET} {DIM}{ITALIC}{desc_line}{RESET} {CYAN}{V}{RESET}")
 
@@ -417,17 +432,17 @@ def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
     Raises:
         ValueError: If format is invalid
     """
-    if ':' not in agent_spec:
+    if ":" not in agent_spec:
         raise ValueError(
             f"Invalid agent spec format: '{agent_spec}'. "
             f"Expected format: 'path/to/file.py:variable_name'"
         )
 
-    parts = agent_spec.rsplit(':', 1)
+    parts = agent_spec.rsplit(":", 1)
     file_path = parts[0]
     variable_name = parts[1]
 
-    if not file_path.endswith('.py'):
+    if not file_path.endswith(".py"):
         raise ValueError(f"Agent spec file must be a .py file: {file_path}")
 
     return file_path, variable_name
@@ -457,12 +472,12 @@ def load_graph(spec: str, default_graph_name: str = "graph"):
     """
     path_or_module = spec
     graph_name = default_graph_name
-    if ':' in spec:
-        head, _, tail = spec.rpartition(':')
+    if ":" in spec:
+        head, _, tail = spec.rpartition(":")
         # Only treat the trailing ':token' as a graph name if it looks like one
         # — i.e. it has no path separators. This avoids mistaking a Windows
         # drive-letter colon (e.g. 'C:\path\agent.py') for a name suffix.
-        if tail and '/' not in tail and '\\' not in tail:
+        if tail and "/" not in tail and "\\" not in tail:
             path_or_module = head
             graph_name = tail or default_graph_name
 
@@ -561,8 +576,8 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         print(f"\n{YELLOW}⚠ Action Required{RESET}")
         if action_requests:
             for i, action in enumerate(action_requests):
-                tool = action.get('tool', 'unknown')
-                args_preview = get_tool_arg_preview(action.get('args', {}))
+                tool = action.get("tool", "unknown")
+                args_preview = get_tool_arg_preview(action.get("args", {}))
                 print(f"  {DIM}{i + 1}. {tool}{RESET}")
                 if args_preview:
                     print(f"     {DIM}└─ {args_preview}{RESET}")
@@ -580,18 +595,18 @@ def get_key() -> str:
     if IS_WINDOWS:
         # Windows implementation using msvcrt
         ch = msvcrt.getch()
-        if ch in (b'\x00', b'\xe0'):  # Special keys (arrows, function keys)
+        if ch in (b"\x00", b"\xe0"):  # Special keys (arrows, function keys)
             ch2 = msvcrt.getch()
-            if ch2 == b'H':
-                return 'up'
-            elif ch2 == b'P':
-                return 'down'
-            return ch2.decode('utf-8', errors='ignore')
-        elif ch == b'\r':
-            return 'enter'
-        elif ch == b'\x03':  # Ctrl+C
-            return 'ctrl-c'
-        return ch.decode('utf-8', errors='ignore')
+            if ch2 == b"H":
+                return "up"
+            elif ch2 == b"P":
+                return "down"
+            return ch2.decode("utf-8", errors="ignore")
+        elif ch == b"\r":
+            return "enter"
+        elif ch == b"\x03":  # Ctrl+C
+            return "ctrl-c"
+        return ch.decode("utf-8", errors="ignore")
     else:
         # Unix implementation using termios/tty
         fd = sys.stdin.fileno()
@@ -600,18 +615,18 @@ def get_key() -> str:
             tty.setraw(fd)
             ch = sys.stdin.read(1)
             # Handle escape sequences (arrow keys)
-            if ch == '\x1b':
+            if ch == "\x1b":
                 ch2 = sys.stdin.read(1)
-                if ch2 == '[':
+                if ch2 == "[":
                     ch3 = sys.stdin.read(1)
-                    if ch3 == 'A':
-                        return 'up'
-                    elif ch3 == 'B':
-                        return 'down'
-            elif ch == '\r' or ch == '\n':
-                return 'enter'
-            elif ch == '\x03':  # Ctrl+C
-                return 'ctrl-c'
+                    if ch3 == "A":
+                        return "up"
+                    elif ch3 == "B":
+                        return "down"
+            elif ch == "\r" or ch == "\n":
+                return "enter"
+            elif ch == "\x03":  # Ctrl+C
+                return "ctrl-c"
             return ch
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -647,13 +662,13 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
         while True:
             key = get_key()
 
-            if key == 'up' and selected > 0:
+            if key == "up" and selected > 0:
                 selected -= 1
-            elif key == 'down' and selected < num_options - 1:
+            elif key == "down" and selected < num_options - 1:
                 selected += 1
-            elif key == 'enter':
+            elif key == "enter":
                 break
-            elif key == 'ctrl-c':
+            elif key == "ctrl-c":
                 print("\033[?25h", end="")  # Show cursor
                 sys.exit(0)
 
@@ -732,7 +747,9 @@ async def run_single_turn_async(
         spinner = Spinner("Thinking")
         spinner.start()
 
-        async for chunk in astream_graph_updates(graph, input_data, config=config, stream_mode=stream_mode):
+        async for chunk in astream_graph_updates(
+            graph, input_data, config=config, stream_mode=stream_mode
+        ):
             # Stop spinner on first chunk
             if first_chunk:
                 spinner.stop()
@@ -779,7 +796,9 @@ def run_single_turn_sync(
         spinner = Spinner("Thinking")
         spinner.start()
 
-        for chunk in stream_graph_updates(graph, input_data, config=config, stream_mode=stream_mode):
+        for chunk in stream_graph_updates(
+            graph, input_data, config=config, stream_mode=stream_mode
+        ):
             # Stop spinner on first chunk
             if first_chunk:
                 spinner.stop()
@@ -831,6 +850,7 @@ def print_help():
 
 
 # --- Built-in Slash Commands ---
+
 
 @register_command(
     name="help",
@@ -943,6 +963,7 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
         # Full resolved view: each value, where it came from, and the env var
         # / TOML key that sets it.
         from deepagent_code.config import CodeConfig
+
         for line in CodeConfig.resolve().describe().splitlines():
             print(f"  {line}")
 
@@ -1178,10 +1199,14 @@ def run_conversation_loop(
 
         if use_async:
             duration = asyncio.run(
-                run_single_turn_async(graph, initial_message, config, interactive, verbose, stream_mode)
+                run_single_turn_async(
+                    graph, initial_message, config, interactive, verbose, stream_mode
+                )
             )
         else:
-            duration = run_single_turn_sync(graph, initial_message, config, interactive, verbose, stream_mode)
+            duration = run_single_turn_sync(
+                graph, initial_message, config, interactive, verbose, stream_mode
+            )
         print_timing(duration, verbose)
         print()
 
@@ -1252,10 +1277,14 @@ def run_conversation_loop(
             # Run the agent
             if use_async:
                 duration = asyncio.run(
-                    run_single_turn_async(graph, user_input, config, interactive, verbose, stream_mode)
+                    run_single_turn_async(
+                        graph, user_input, config, interactive, verbose, stream_mode
+                    )
                 )
             else:
-                duration = run_single_turn_sync(graph, user_input, config, interactive, verbose, stream_mode)
+                duration = run_single_turn_sync(
+                    graph, user_input, config, interactive, verbose, stream_mode
+                )
             print_timing(duration, verbose)
             print()
 
@@ -1359,7 +1388,7 @@ def main(
 
         if prompt_file:
             try:
-                with open(prompt_file, 'r', encoding='utf-8') as f:
+                with open(prompt_file, "r", encoding="utf-8") as f:
                     message = f.read().strip()
                 if not message:
                     print(f"{RED}⏺ Error: File '{prompt_file}' is empty{RESET}")
@@ -1397,9 +1426,7 @@ def main(
         verbose = cfg.verbose
         # Only change directory when a workspace root was actually configured.
         workspace_root = (
-            cfg.workspace_root
-            if cfg.sources.get("workspace_root") != "default"
-            else None
+            cfg.workspace_root if cfg.sources.get("workspace_root") != "default" else None
         )
 
         # If no spec provided, try the default agent
@@ -1410,8 +1437,8 @@ def main(
             else:
                 print(f"{RED}⏺ Error: No agent specified.{RESET}")
                 print(f"\n{DIM}Usage:{RESET}")
-                print(f"  deepagent-code path/to/agent.py:graph")
-                print(f"  deepagent-code mypackage.module:agent")
+                print("  deepagent-code path/to/agent.py:graph")
+                print("  deepagent-code mypackage.module:agent")
                 print(f"\n{DIM}Or set DEEPAGENT_AGENT_SPEC environment variable{RESET}")
                 sys.exit(1)
 
@@ -1472,6 +1499,7 @@ def main(
         print(f"{RED}⏺ Error: {e}{RESET}")
         if verbose:
             import traceback
+
             print(traceback.format_exc())
         sys.exit(1)
 

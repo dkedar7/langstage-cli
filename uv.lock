@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 
 [[package]]
@@ -200,6 +200,7 @@ dependencies = [
     { name = "click" },
     { name = "deepagents" },
     { name = "langgraph" },
+    { name = "langgraph-stream-parser" },
     { name = "python-dotenv" },
 ]
 
@@ -218,6 +219,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
     { name = "deepagents" },
     { name = "langgraph", specifier = ">=0.2.0" },
+    { name = "langgraph-stream-parser", specifier = ">=0.2,<0.3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
@@ -585,6 +587,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c3/0f/ed0634c222eed48a31ba48eab6881f94ad690d65e44fe7ca838240a260c1/langgraph_sdk-0.3.3.tar.gz", hash = "sha256:c34c3dce3b6848755eb61f0c94369d1ba04aceeb1b76015db1ea7362c544fb26", size = 130589, upload-time = "2026-01-13T00:30:43.894Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6e/be/4ad511bacfdd854afb12974f407cb30010dceb982dc20c55491867b34526/langgraph_sdk-0.3.3-py3-none-any.whl", hash = "sha256:a52ebaf09d91143e55378bb2d0b033ed98f57f48c9ad35c8f81493b88705fc7b", size = 67021, upload-time = "2026-01-13T00:30:42.264Z" },
+]
+
+[[package]]
+name = "langgraph-stream-parser"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/25/f6b22d590972b2b18963f6d0e1d7e05fdacfaa95e43edaf2715724feebb6/langgraph_stream_parser-0.2.0.tar.gz", hash = "sha256:acca25a0b87b459abb689e613a5272401e6093dadbca1e962b4f2a9ef7eafcbc", size = 214023, upload-time = "2026-06-02T12:05:58.154Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/04/8b9bd68208a71917376cdf493e8073028e4f9d2a36334dcf8c8f80237f36/langgraph_stream_parser-0.2.0-py3-none-any.whl", hash = "sha256:fcafb4dc96a115777b8035edbe6a03fa4353fdb06653e3fdc027476085c266a8", size = 69948, upload-time = "2026-06-02T12:05:57.008Z" },
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 """Tests for CodeConfig — deepagent-code's HostConfig subclass."""
+
 from pathlib import Path
 
 import pytest
@@ -34,9 +35,11 @@ def test_env_stream_mode(isolated, tmp_path):
 
 
 def test_toml_keys(isolated, tmp_path):
-    _toml(tmp_path,
-          '[agent]\nspec = "a.py:g"\ngraph_name = "myg"\n'
-          '[ui]\nverbose = true\nasync_mode = true\nstream_mode = "values"\n')
+    _toml(
+        tmp_path,
+        '[agent]\nspec = "a.py:g"\ngraph_name = "myg"\n'
+        '[ui]\nverbose = true\nasync_mode = true\nstream_mode = "values"\n',
+    )
     cfg = CodeConfig.resolve(env={}, toml_start=tmp_path)
     assert cfg.agent_spec == "a.py:g"
     assert cfg.graph_name == "myg"
