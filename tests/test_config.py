@@ -1,4 +1,5 @@
 """Tests for deepagent_code.config."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,7 +24,7 @@ def test_returns_empty_when_no_files(tmp_path, monkeypatch):
 
 def test_loads_global_only(tmp_path, monkeypatch):
     home = tmp_path / "home"
-    _write(home / "config.toml", '[ui]\nverbose = true\n')
+    _write(home / "config.toml", "[ui]\nverbose = true\n")
     monkeypatch.setenv("DEEPAGENTS_CONFIG_HOME", str(home))
     monkeypatch.chdir(tmp_path)
     cfg, sources = config.load_config()
@@ -47,7 +48,7 @@ def test_project_overrides_global(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPAGENTS_CONFIG_HOME", str(home))
 
     project = tmp_path / "proj"
-    _write(project / "deepagents.toml", '[ui]\nverbose = true\n')
+    _write(project / "deepagents.toml", "[ui]\nverbose = true\n")
     monkeypatch.chdir(project)
 
     cfg, sources = config.load_config()
@@ -61,7 +62,7 @@ def test_walks_up_for_project_config(tmp_path, monkeypatch):
     project = tmp_path / "proj"
     nested = project / "a" / "b" / "c"
     nested.mkdir(parents=True)
-    _write(project / "deepagents.toml", '[ui]\nverbose = true\n')
+    _write(project / "deepagents.toml", "[ui]\nverbose = true\n")
     monkeypatch.chdir(nested)
 
     cfg, sources = config.load_config()
@@ -99,9 +100,9 @@ def test_resolve_precedence(monkeypatch):
     monkeypatch.setenv("UI_VERBOSE", "false")
     assert config.resolve(cfg, "ui.verbose", env_var="UI_VERBOSE", cast=bool) is False
     # cli beats env
-    assert config.resolve(
-        cfg, "ui.verbose", cli_value=True, env_var="UI_VERBOSE", cast=bool
-    ) is True
+    assert (
+        config.resolve(cfg, "ui.verbose", cli_value=True, env_var="UI_VERBOSE", cast=bool) is True
+    )
 
 
 def test_resolve_bool_cast(monkeypatch):

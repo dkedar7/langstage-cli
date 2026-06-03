@@ -1,4 +1,5 @@
 """Tests for CLI functions."""
+
 import pytest
 from deepagent_code.cli import parse_agent_spec
 
