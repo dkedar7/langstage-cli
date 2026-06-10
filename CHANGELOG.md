@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-06-02
+
+Adopts the shared `langgraph-stream-parser` runtime and config layer.
+
+### Changed
+- Routes streaming through `langgraph-stream-parser` (`compat.stream_graph_updates` / `astream_graph_updates`) — the in-tree 654-line `utils.py` reimplementation of the stream parser is **deleted**. CLI rendering is unchanged.
+- `load_graph` now delegates to `host.load_agent_spec`; the bespoke file/module loaders are gone.
+- Config resolves via the new `CodeConfig(HostConfig)`: `defaults < deepagents.toml < DEEPAGENT_* env < CLI overrides`. The TOML loader is shared with the rest of the family (`host.load_toml_config`).
+- **`DEEPAGENT_AGENT_SPEC` is canonical again** (reverting the 0.1.4 rename to `DEEPAGENT_SPEC`); `DEEPAGENT_SPEC` is now a deprecated alias that warns once.
+- The workspace TOML key moves from `agent.workspace_root` to the shared `workspace.root`.
+- `verbose` / `async_mode` flags now fall back to TOML/env when the flag isn't passed (previously the absent flag's `False` always won).
+
+### Added
+- `langgraph-stream-parser>=0.2,<0.3` dependency.
+- `/config` now prints the resolved config with each value's source + env var / TOML key.
+
+### Fixed
+- `load_graph` no longer mistakes a Windows drive-letter colon (`C:\...\agent.py`) for a `:graph_name` suffix.
+
 ## [0.1.6] - 2026-04-18
 
 ### Added
