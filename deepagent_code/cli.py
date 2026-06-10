@@ -1339,6 +1339,19 @@ def run_conversation_loop(
     default=None,
     help="Show verbose output including node names",
 )
+@click.option(
+    "--demo",
+    is_flag=True,
+    default=False,
+    help="Run with the built-in keyless demo agent — no API key needed",
+)
+@click.option(
+    "--show-config",
+    "show_config",
+    is_flag=True,
+    default=False,
+    help="Print the resolved configuration (defaults < deepagents.toml < env < CLI) and exit",
+)
 def main(
     message: Optional[str],
     agent_spec: Optional[str],
@@ -1348,6 +1361,8 @@ def main(
     use_async: Optional[bool],
     stream_mode: Optional[str],
     verbose: Optional[bool],
+    demo: bool,
+    show_config: bool,
 ):
     """
     Run a LangGraph agent from the command line.
@@ -1379,7 +1394,20 @@ def main(
         deepagent-code -a my_agent.py "What can you do?"
         deepagent-code -a my_agent.py:graph
         deepagent-code -f ./prompt.md
+        deepagent-code --demo "try it with no API key"
+        deepagent-code --show-config
     """
+    if show_config:
+        print(config_module.CodeConfig.resolve(toml_start=Path.cwd()).describe())
+        return
+
+    if demo:
+        if agent_spec:
+            print(f"{RED}⏺ Error: --demo and -a/--agent are mutually exclusive{RESET}")
+            sys.exit(1)
+        # The keyless echo agent shipped with the shared core.
+        agent_spec = "langgraph_stream_parser.demo.stub:graph"
+
     try:
         # Handle -f/--file option: read message from file
         if prompt_file and message:
