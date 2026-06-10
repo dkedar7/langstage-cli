@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-06-10
+
+### Added
+- **`--demo`** — run the CLI against the shared keyless echo stub (`langgraph_stream_parser.demo.stub:graph`): a real compiled LangGraph graph streaming through the normal parser path, with no API key and no network. Mutually exclusive with `-a/--agent`.
+- **`--show-config`** — print the resolved configuration (defaults < `deepagents.toml` < `DEEPAGENT_*` env < CLI), each value with its source and the key that sets it, then exit.
+- README: *One agent, every surface* family table; env-var docs now show canonical `DEEPAGENT_AGENT_SPEC` (legacy `DEEPAGENT_SPEC` remains a deprecated alias).
+
+### Changed
+- `langgraph-stream-parser` pinned `>=0.2.2,<0.3` (the release that ships the stub).
+
 ## [0.2.0] - 2026-06-02
 
 Adopts the shared `langgraph-stream-parser` runtime and config layer.
