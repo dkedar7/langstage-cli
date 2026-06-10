@@ -4,6 +4,19 @@ A Claude Code-style CLI for running LangGraph agents from the terminal.
 
 ![deepagent-code](examples/image.png)
 
+## One agent, every surface
+
+deepagent-code is the terminal surface of the **deep-agent family**: write your agent once — any LangGraph `CompiledGraph` — and run it on every surface with the same spec string (`module:attr` or `path/to/file.py:attr`), the same `deepagents.toml` config file, and the same `DEEPAGENT_*` environment variables.
+
+| Surface | Package | Try it |
+|---|---|---|
+| Web app | [cowork-dash](https://github.com/dkedar7/cowork-dash) | `cowork-dash run --agent my_agent.py:graph` |
+| JupyterLab | [deepagent-lab](https://github.com/dkedar7/deepagent-lab) | `pip install deepagent-lab`, then the chat sidebar in `jupyter lab` |
+| Terminal | deepagent-code | **you are here** |
+| VS Code | [deepagent-vscode](https://github.com/dkedar7/deepagent-vscode) | chat participant + stdio sidecar |
+| Reference agent | [deepagent-hermes](https://github.com/dkedar7/deepagent-hermes) | `DEEPAGENT_AGENT_SPEC=deepagent_hermes.agent:graph` on any surface |
+| Shared core | [langgraph-stream-parser](https://github.com/dkedar7/langgraph-stream-parser) | typed events + config resolver behind every surface |
+
 ## Installation
 
 ```bash
@@ -16,6 +29,11 @@ pip install git+https://github.com/dkedar7/deepagent-code.git
 ```
 
 ## Quick Start
+
+No agent or API key yet? See the CLI working in one command:
+```bash
+deepagent-code --demo "hello"
+```
 
 Run with the default agent (requires `ANTHROPIC_API_KEY`):
 ```bash
@@ -53,6 +71,13 @@ deepagent-code --no-interactive
 
 # Verbose output
 deepagent-code -v
+
+# Keyless demo agent (no API key needed)
+deepagent-code --demo
+
+# Print the resolved configuration: each value, its source, and the
+# env var / deepagents.toml key that sets it
+deepagent-code --show-config
 ```
 
 ## Commands
@@ -66,7 +91,8 @@ In the interactive loop:
 
 ```bash
 # Agent location (path/to/file.py:variable_name or module:variable)
-export DEEPAGENT_SPEC="my_agent.py:graph"
+# (DEEPAGENT_SPEC is still accepted as a deprecated alias)
+export DEEPAGENT_AGENT_SPEC="my_agent.py:graph"
 deepagent-code
 
 # Working directory

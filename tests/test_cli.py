@@ -1,7 +1,32 @@
 """Tests for CLI functions."""
 
 import pytest
-from deepagent_code.cli import parse_agent_spec
+from click.testing import CliRunner
+
+from deepagent_code.cli import main, parse_agent_spec
+
+
+class TestCliFlags:
+    """Tests for --show-config and --demo."""
+
+    def test_show_config_prints_resolved_config(self):
+        result = CliRunner().invoke(main, ["--show-config"])
+        assert result.exit_code == 0, result.output
+        assert "DEEPAGENT_AGENT_SPEC" in result.output
+
+    def test_demo_and_agent_are_mutually_exclusive(self):
+        result = CliRunner().invoke(main, ["--demo", "-a", "x.py:g", "hi"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_demo_replies_without_any_key(self, monkeypatch):
+        # A full one-shot turn through the real stub agent — proves --demo
+        # works on a machine with no API keys configured.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        result = CliRunner().invoke(main, ["--demo", "--no-interactive", "hello demo"])
+        assert result.exit_code == 0, result.output
+        assert "hello demo" in result.output
 
 
 class TestParseAgentSpec:
