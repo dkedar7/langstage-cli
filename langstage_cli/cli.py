@@ -23,7 +23,7 @@ from langgraph_stream_parser import (
     astream_graph_updates,
     load_agent_spec,
 )
-from deepagent_code import config as config_module
+from langstage_cli import config as config_module
 
 # Platform-specific imports for keyboard input
 IS_WINDOWS = sys.platform == "win32"
@@ -906,7 +906,7 @@ def cmd_clear(args: str, context: Dict[str, Any]) -> Optional[str]:
 )
 def cmd_version(args: str, context: Dict[str, Any]) -> Optional[str]:
     """Display version information."""
-    print(f"\n{BOLD}{BRIGHT_CYAN}deepagent-code{RESET} v{__version__}")
+    print(f"\n{BOLD}{BRIGHT_CYAN}langstage-cli{RESET} v{__version__}")
     agent_name = context.get("agent_name", "Unknown")
     print(f"{DIM}Agent: {agent_name}{RESET}\n")
     return None
@@ -962,7 +962,7 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
 
         # Full resolved view: each value, where it came from, and the env var
         # / TOML key that sets it.
-        from deepagent_code.config import CodeConfig
+        from langstage_cli.config import CodeConfig
 
         for line in CodeConfig.resolve().describe().splitlines():
             print(f"  {line}")
@@ -1390,12 +1390,12 @@ def main(
 
     \b
     Examples:
-        deepagent-code "Hello, agent!"
-        deepagent-code -a my_agent.py "What can you do?"
-        deepagent-code -a my_agent.py:graph
-        deepagent-code -f ./prompt.md
-        deepagent-code --demo "try it with no API key"
-        deepagent-code --show-config
+        langstage-cli "Hello, agent!"
+        langstage-cli -a my_agent.py "What can you do?"
+        langstage-cli -a my_agent.py:graph
+        langstage-cli -f ./prompt.md
+        langstage-cli --demo "try it with no API key"
+        langstage-cli --show-config
     """
     if show_config:
         print(config_module.CodeConfig.resolve(toml_start=Path.cwd()).describe())
@@ -1465,8 +1465,8 @@ def main(
             else:
                 print(f"{RED}⏺ Error: No agent specified.{RESET}")
                 print(f"\n{DIM}Usage:{RESET}")
-                print("  deepagent-code path/to/agent.py:graph")
-                print("  deepagent-code mypackage.module:agent")
+                print("  langstage-cli path/to/agent.py:graph")
+                print("  langstage-cli mypackage.module:agent")
                 print(f"\n{DIM}Or set DEEPAGENT_AGENT_SPEC environment variable{RESET}")
                 sys.exit(1)
 

@@ -1,1 +1,1 @@
-"""Tests for deepagent-code."""
+"""Tests for langstage-cli."""

@@ -3,7 +3,7 @@
 import pytest
 from click.testing import CliRunner
 
-from deepagent_code.cli import main, parse_agent_spec
+from langstage_cli.cli import main, parse_agent_spec
 
 
 class TestCliFlags:
