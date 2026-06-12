@@ -1,49 +1,51 @@
-# deepagent-code
+# langstage-cli
 
-A Claude Code-style CLI for running LangGraph agents from the terminal.
+**The terminal stage for your LangGraph agent.** A Claude Code-style CLI that runs *any* LangGraph `CompiledGraph` — yours, not a bundled one — with streaming, tool-call rendering, and human-in-the-loop approval.
 
-![deepagent-code](examples/image.png)
+> Renamed from **deepagent-code** (the old package name now just installs this one, and the `deepagent-code` command still works).
 
-## One agent, every surface
+![langstage-cli](examples/image.png)
 
-deepagent-code is the terminal surface of the **deep-agent family**: write your agent once — any LangGraph `CompiledGraph` — and run it on every surface with the same spec string (`module:attr` or `path/to/file.py:attr`), the same `deepagents.toml` config file, and the same `DEEPAGENT_*` environment variables.
+## Every stage for your LangGraph agent
 
-| Surface | Package | Try it |
+langstage-cli is the terminal stage of the **LangStage family**: write your agent once — any LangGraph `CompiledGraph` — and run it on every stage with the same spec string (`module:attr` or `path/to/file.py:attr`), the same `langstage.toml` config file, and the same `LANGSTAGE_*` environment variables.
+
+| Stage | Package | Try it |
 |---|---|---|
-| Web app | [cowork-dash](https://github.com/dkedar7/cowork-dash) | `cowork-dash run --agent my_agent.py:graph` |
-| JupyterLab | [deepagent-lab](https://github.com/dkedar7/deepagent-lab) | `pip install deepagent-lab`, then the chat sidebar in `jupyter lab` |
-| Terminal | deepagent-code | **you are here** |
-| VS Code | [deepagent-vscode](https://github.com/dkedar7/deepagent-vscode) | chat participant + stdio sidecar |
-| Reference agent | [deepagent-hermes](https://github.com/dkedar7/deepagent-hermes) | `DEEPAGENT_AGENT_SPEC=deepagent_hermes.agent:graph` on any surface |
-| Shared core | [langgraph-stream-parser](https://github.com/dkedar7/langgraph-stream-parser) | typed events + config resolver behind every surface |
+| Web app | [langstage](https://github.com/dkedar7/langstage) | `langstage run --agent my_agent.py:graph` |
+| JupyterLab | [langstage-jupyter](https://github.com/dkedar7/langstage-jupyter) | `pip install langstage-jupyter`, then the chat sidebar in `jupyter lab` |
+| Terminal | langstage-cli | **you are here** |
+| VS Code | [langstage-vscode](https://github.com/dkedar7/langstage-vscode) | chat participant + stdio sidecar |
+| Reference agent | [langstage-hermes](https://github.com/dkedar7/langstage-hermes) | `LANGSTAGE_AGENT_SPEC=langstage_hermes.agent:graph` on any stage |
+| Shared core | [langgraph-stream-parser](https://github.com/dkedar7/langgraph-stream-parser) | typed events + config resolver behind every stage |
 
 ## Installation
 
 ```bash
-pip install deepagent-code
+pip install langstage-cli
 ```
 
 Or install directly from GitHub:
 ```bash
-pip install git+https://github.com/dkedar7/deepagent-code.git
+pip install git+https://github.com/dkedar7/langstage-cli.git
 ```
 
 ## Quick Start
 
 No agent or API key yet? See the CLI working in one command:
 ```bash
-deepagent-code --demo "hello"
+langstage-cli --demo "hello"
 ```
 
 Run with the default agent (requires `ANTHROPIC_API_KEY`):
 ```bash
 export ANTHROPIC_API_KEY="your_api_key"
-deepagent-code
+langstage-cli
 ```
 
 Or specify your own agent:
 ```bash
-deepagent-code -a path/to/your_agent.py:graph
+langstage-cli -a path/to/your_agent.py:graph
 ```
 
 This launches an interactive conversation loop with your agent.
@@ -52,32 +54,32 @@ This launches an interactive conversation loop with your agent.
 
 ```bash
 # Use the default agent
-deepagent-code
+langstage-cli
 
 # Send a message directly
-deepagent-code "Hello, agent!"
+langstage-cli "Hello, agent!"
 
 # Specify a custom agent file
-deepagent-code -a my_agent.py:graph
+langstage-cli -a my_agent.py:graph
 
 # Use a module path
-deepagent-code -a mypackage.agents:chatbot
+langstage-cli -a mypackage.agents:chatbot
 
 # Read message from a file
-deepagent-code -f ./prompt.md
+langstage-cli -f ./prompt.md
 
 # Non-interactive mode (auto-approve tool calls)
-deepagent-code --no-interactive
+langstage-cli --no-interactive
 
 # Verbose output
-deepagent-code -v
+langstage-cli -v
 
 # Keyless demo agent (no API key needed)
-deepagent-code --demo
+langstage-cli --demo
 
 # Print the resolved configuration: each value, its source, and the
-# env var / deepagents.toml key that sets it
-deepagent-code --show-config
+# env var / langstage.toml key that sets it
+langstage-cli --show-config
 ```
 
 ## Commands
@@ -91,29 +93,32 @@ In the interactive loop:
 
 ```bash
 # Agent location (path/to/file.py:variable_name or module:variable)
-# (DEEPAGENT_SPEC is still accepted as a deprecated alias)
-export DEEPAGENT_AGENT_SPEC="my_agent.py:graph"
-deepagent-code
+# (DEEPAGENT_AGENT_SPEC / DEEPAGENT_SPEC still accepted as deprecated aliases)
+export LANGSTAGE_AGENT_SPEC="my_agent.py:graph"
+langstage-cli
 
 # Working directory
-export DEEPAGENT_WORKSPACE_ROOT="/path/to/workspace"
+export LANGSTAGE_WORKSPACE_ROOT="/path/to/workspace"
 
 # Stream mode (updates or values)
-export DEEPAGENT_STREAM_MODE="updates"
+export LANGSTAGE_STREAM_MODE="updates"
 ```
 
 ## Configuration Files
 
-`deepagent-code` reads TOML config from two locations and merges them
+`langstage-cli` reads TOML config from two locations and merges them
 (project overrides global):
 
-- **Global**: `~/.deepagents/config.toml` (shared with the upstream
-  `deepagents` CLI)
-- **Project**: `deepagents.toml` in the current directory or any ancestor
+- **Global**: `~/.langstage/config.toml`
+- **Project**: `langstage.toml` in the current directory or any ancestor
+
+Legacy locations (`~/.deepagents/config.toml`, `deepagents.toml`) are still
+read as fallbacks; move your config when convenient — `~/.deepagents/` now
+belongs to LangChain's `dcode`.
 
 Precedence: CLI args > env vars > project TOML > global TOML > defaults.
 
-Example `deepagents.toml`:
+Example `langstage.toml`:
 
 ```toml
 [agent]
@@ -133,7 +138,7 @@ thread_id = "my-thread"
 ## CLI Options
 
 ```
-Usage: deepagent-code [OPTIONS] [MESSAGE]
+Usage: langstage-cli [OPTIONS] [MESSAGE]
 
 Arguments:
   MESSAGE  Optional input to send to the agent immediately
@@ -166,13 +171,13 @@ agent = create_deep_agent(
 
 Then run it:
 ```bash
-deepagent-code -a my_agent.py:agent
+langstage-cli -a my_agent.py:agent
 ```
 
 ## Programmatic Use
 
 ```python
-from deepagent_code import stream_graph_updates, prepare_agent_input
+from langstage_cli import stream_graph_updates, prepare_agent_input
 
 input_data = prepare_agent_input(message="Hello!")
 

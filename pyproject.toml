@@ -3,16 +3,16 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deepagent-code"
-version = "0.3.0"
-description = "A Claude Code-style CLI for running LangGraph agents from the terminal"
+name = "langstage-cli"
+version = "0.4.0"
+description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
     {name = "Kedar Dabhadkar", email = "kdabhadk@gmail.com"}
 ]
-keywords = ["langgraph", "cli", "agents", "llm", "ai", "claude-code"]
+keywords = ["langgraph", "langchain", "langstage", "cli", "agents", "llm", "ai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -25,7 +25,7 @@ classifiers = [
 
 dependencies = [
     "langgraph>=0.2.0",
-    "langgraph-stream-parser>=0.2.2,<0.3",
+    "langgraph-stream-parser>=0.3,<0.4",
     "click>=8.0.0",
     "python-dotenv",
     "deepagents",
@@ -41,16 +41,18 @@ dev = [
 ]
 
 [project.scripts]
-deepagent-code = "deepagent_code.cli:main"
+langstage-cli = "langstage_cli.cli:main"
+# Deprecated alias command — kept for one transition window.
+deepagent-code = "langstage_cli.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/dkedar7/deepagent-code"
-Repository = "https://github.com/dkedar7/deepagent-code"
-Issues = "https://github.com/dkedar7/deepagent-code/issues"
+Homepage = "https://github.com/dkedar7/langstage-cli"
+Repository = "https://github.com/dkedar7/langstage-cli"
+Issues = "https://github.com/dkedar7/langstage-cli/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["deepagent_code*"]
+include = ["langstage_cli*", "deepagent_code*"]
 
 [tool.black]
 line-length = 100

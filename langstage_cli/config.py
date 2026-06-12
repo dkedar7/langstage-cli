@@ -1,11 +1,11 @@
-"""Configuration for deepagent-code.
+"""Configuration for langstage-cli.
 
 Shares the TOML loader and the ``DEEPAGENT_*`` schema with the rest of the
 deep-agent family via ``langgraph_stream_parser.host``: global
 ``~/.deepagents/config.toml`` + project ``deepagents.toml`` (merged), then env
 vars, then CLI overrides.
 
-``CodeConfig`` is deepagent-code's view of that shared config. ``load_config`` /
+``CodeConfig`` is langstage-cli's view of that shared config. ``load_config`` /
 ``get`` / ``resolve`` remain for the ``[configurable]`` passthrough and ad-hoc
 lookups.
 """
@@ -77,12 +77,13 @@ def resolve(
 
 @dataclass
 class CodeConfig(HostConfig):
-    """deepagent-code's view of the shared config.
+    """langstage-cli's view of the shared config.
 
     Adds the CLI-specific keys on top of ``HostConfig``'s shared ones, resolved
-    through the same ``defaults < deepagents.toml < DEEPAGENT_* env <
-    overrides`` chain. ``DEEPAGENT_AGENT_SPEC`` is canonical;
-    ``DEEPAGENT_SPEC`` is a deprecated alias.
+    through the same ``defaults < langstage.toml < LANGSTAGE_* env <
+    overrides`` chain. The legacy ``deepagents.toml`` / ``DEEPAGENT_*``
+    vocabulary still resolves as a deprecated fallback (handled by the shared
+    resolver); the even-older ``DEEPAGENT_SPEC`` alias is reconciled below.
     """
 
     stream_mode: str = "updates"
@@ -91,7 +92,7 @@ class CodeConfig(HostConfig):
     async_mode: bool = False
 
     _ENV: ClassVar[dict] = {
-        "stream_mode": ("DEEPAGENT_STREAM_MODE", str),
+        "stream_mode": ("LANGSTAGE_STREAM_MODE", str),
     }
     _TOML: ClassVar[dict] = {
         "stream_mode": "ui.stream_mode",
@@ -103,11 +104,17 @@ class CodeConfig(HostConfig):
     @classmethod
     def resolve(cls, *, env: Optional[dict] = None, **kwargs: Any) -> "CodeConfig":
         env = dict(os.environ if env is None else env)
-        # Reconcile the legacy spec var — DEEPAGENT_AGENT_SPEC is canonical.
-        if not env.get("DEEPAGENT_AGENT_SPEC") and env.get("DEEPAGENT_SPEC"):
+        # Reconcile the oldest legacy spec var. DEEPAGENT_AGENT_SPEC itself is
+        # the shared resolver's legacy twin of LANGSTAGE_AGENT_SPEC, so mapping
+        # onto it keeps the full precedence chain intact.
+        if (
+            not env.get("LANGSTAGE_AGENT_SPEC")
+            and not env.get("DEEPAGENT_AGENT_SPEC")
+            and env.get("DEEPAGENT_SPEC")
+        ):
             env["DEEPAGENT_AGENT_SPEC"] = env["DEEPAGENT_SPEC"]
             warnings.warn(
-                "DEEPAGENT_SPEC is deprecated; use DEEPAGENT_AGENT_SPEC.",
+                "DEEPAGENT_SPEC is deprecated; use LANGSTAGE_AGENT_SPEC.",
                 DeprecationWarning,
                 stacklevel=2,
             )

@@ -1,4 +1,4 @@
-"""Tests for deepagent_code.config."""
+"""Tests for langstage_cli.config."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from deepagent_code import config
+from langstage_cli import config
 
 
 def _write(path: Path, content: str) -> None:

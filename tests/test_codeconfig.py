@@ -1,10 +1,10 @@
-"""Tests for CodeConfig — deepagent-code's HostConfig subclass."""
+"""Tests for CodeConfig — langstage-cli's HostConfig subclass."""
 
 from pathlib import Path
 
 import pytest
 
-from deepagent_code.config import CodeConfig
+from langstage_cli.config import CodeConfig
 
 
 @pytest.fixture

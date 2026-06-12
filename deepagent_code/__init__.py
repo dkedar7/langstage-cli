@@ -1,27 +1,23 @@
-"""
-deepagent_code - A Claude Code-style CLI for running LangGraph agents.
+"""Deprecated alias package: ``deepagent_code`` is now ``langstage_cli``.
 
-The streaming / interrupt utilities that used to live here now come from
-``langgraph-stream-parser``. This package re-exports its dict-based convenience
-API for backward compatibility; the lower-level helpers (interrupt parsing,
-tool-call serialization, content extraction) are available from
-``langgraph_stream_parser.extractors`` if needed directly.
+Kept for one transition window so existing imports keep working. Import
+``langstage_cli`` instead.
 """
 
-from langgraph_stream_parser import (
-    prepare_agent_input,
-    stream_graph_updates,
-    resume_graph_from_interrupt,
-    astream_graph_updates,
-    aresume_graph_from_interrupt,
+import sys as _sys
+import warnings as _warnings
+
+import langstage_cli as _new
+from langstage_cli import *  # noqa: F401,F403
+from langstage_cli import cli, config  # noqa: F401
+
+_warnings.warn(
+    "deepagent_code has been renamed to langstage_cli; "
+    "this alias package will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__version__ = "0.2.0"
-
-__all__ = [
-    "prepare_agent_input",
-    "stream_graph_updates",
-    "resume_graph_from_interrupt",
-    "astream_graph_updates",
-    "aresume_graph_from_interrupt",
-]
+_sys.modules[__name__ + ".cli"] = cli
+_sys.modules[__name__ + ".config"] = config
+__version__ = getattr(_new, "__version__", "0")
