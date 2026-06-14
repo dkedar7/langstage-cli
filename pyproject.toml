@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langstage-cli"
-version = "0.4.0"
+version = "0.5.0"
 description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,7 +25,7 @@ classifiers = [
 
 dependencies = [
     "langgraph>=0.2.0",
-    "langgraph-stream-parser>=0.3,<0.4",
+    "langgraph-stream-parser>=0.3,<0.5",
     "click>=8.0.0",
     "python-dotenv",
     "deepagents",
@@ -39,6 +39,7 @@ dev = [
     "ruff==0.15.15",
     "mypy>=1.0.0",
 ]
+agui = ["langgraph-stream-parser[agui]>=0.4,<0.5"]
 
 [project.scripts]
 langstage-cli = "langstage_cli.cli:main"
