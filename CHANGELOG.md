@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1 - 2026-06-16
+
+### Changed
+- Moved `deepagents` from runtime dependencies to the `[dev]` extra. Only the
+  bundled `examples/agent.py` (a dev sample, not shipped) imports it; the CLI never
+  does. A plain `pip install langstage-cli` no longer pulls deepagents/langchain/langgraph.
+
+
 All notable changes to this project will be documented in this file.
 
 ## [0.5.0] - 2026-06-14
