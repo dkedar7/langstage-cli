@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import uuid
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -57,8 +58,6 @@ SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇",
 
 
 # Version info — read from package metadata so it never drifts from pyproject.
-from importlib.metadata import version as _pkg_version, PackageNotFoundError
-
 try:
     __version__ = _pkg_version("langstage-cli")
 except PackageNotFoundError:  # pragma: no cover - editable/source checkout
