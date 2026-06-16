@@ -56,8 +56,13 @@ BRIGHT_GREEN, BRIGHT_YELLOW = "\033[92m", "\033[93m"
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 
-# Version info
-__version__ = "0.2.0"
+# Version info — read from package metadata so it never drifts from pyproject.
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
+
+try:
+    __version__ = _pkg_version("langstage-cli")
+except PackageNotFoundError:  # pragma: no cover - editable/source checkout
+    __version__ = "0.0.0+local"
 
 
 # Slash command registry
