@@ -998,7 +998,7 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
                 context["verbose"] = value.lower() in ("true", "1", "on", "yes")
                 print(f"{GREEN}✓ Set verbose = {context['verbose']}{RESET}")
             else:
-                print(f"{YELLOW}Cannot modify {key} at runtime (edit deepagents.toml){RESET}")
+                print(f"{YELLOW}Cannot modify {key} at runtime (edit langstage.toml){RESET}")
     return None
 
 
@@ -1302,6 +1302,7 @@ def run_conversation_loop(
 
 
 @click.command()
+@click.version_option(__version__, "--version", prog_name="langstage-cli")
 @click.argument("message", required=False)
 @click.option(
     "--agent",
@@ -1354,7 +1355,7 @@ def run_conversation_loop(
     "show_config",
     is_flag=True,
     default=False,
-    help="Print the resolved configuration (defaults < deepagents.toml < env < CLI) and exit",
+    help="Print the resolved configuration (defaults < langstage.toml < env < CLI) and exit",
 )
 def main(
     message: Optional[str],
@@ -1380,17 +1381,18 @@ def main(
     - package.module            (Python module path)
     - package.module:agent      (module with graph variable name)
 
-    Supports environment variables for configuration:
+    Supports environment variables for configuration (legacy DEEPAGENT_*
+    names still work as deprecated aliases):
 
     \b
-    - DEEPAGENT_AGENT_SPEC: Agent location (same formats as above).
-      (DEEPAGENT_SPEC is still accepted as a deprecated alias.)
-    - DEEPAGENT_WORKSPACE_ROOT: Working directory for the agent
-    - DEEPAGENT_STREAM_MODE: Stream mode for LangGraph (updates or values)
+    - LANGSTAGE_AGENT_SPEC: Agent location (same formats as above).
+    - LANGSTAGE_WORKSPACE_ROOT: Working directory for the agent
+    - LANGSTAGE_STREAM_MODE: Stream mode for LangGraph (updates or values)
 
-    Reads ~/.deepagents/config.toml (global) and deepagents.toml (project,
+    Reads ~/.langstage/config.toml (global) and langstage.toml (project,
     walks up from cwd). Precedence: CLI args > env vars > project TOML >
-    global TOML > built-in defaults.
+    global TOML > built-in defaults. (The legacy ~/.deepagents/config.toml and
+    deepagents.toml are still read as deprecated fallbacks.)
 
     \b
     Examples:
@@ -1482,7 +1484,7 @@ def main(
                 print(f"\n{DIM}Usage:{RESET}")
                 print("  langstage-cli path/to/agent.py:graph")
                 print("  langstage-cli mypackage.module:agent")
-                print(f"\n{DIM}Or set DEEPAGENT_AGENT_SPEC environment variable{RESET}")
+                print(f"\n{DIM}Or set the LANGSTAGE_AGENT_SPEC environment variable{RESET}")
                 sys.exit(1)
 
         # Change to workspace root if specified
