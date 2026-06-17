@@ -4,6 +4,7 @@ Before the fix, the --show-config branch resolved config WITHOUT the CLI
 overrides, so flags showed as `[default]` and the reported source could
 contradict the real run.
 """
+
 import re
 
 from click.testing import CliRunner
