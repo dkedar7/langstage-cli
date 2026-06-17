@@ -1401,16 +1401,35 @@ def main(
         langstage-cli --demo "try it with no API key"
         langstage-cli --show-config
     """
-    if show_config:
-        print(config_module.CodeConfig.resolve(toml_start=Path.cwd()).describe())
-        return
-
     if demo:
         if agent_spec:
             print(f"{RED}⏺ Error: --demo and -a/--agent are mutually exclusive{RESET}")
             sys.exit(1)
         # The keyless echo agent shipped with the shared core.
         agent_spec = "langgraph_stream_parser.demo.stub:graph"
+
+    # CLI flags are the highest-precedence config layer. Build the override dict
+    # ONCE and use it for both --show-config and the real run, so the diagnostic
+    # reflects exactly what a run resolves (CLI-set values then show as
+    # `[override]`, not `[default]`). Resolving --show-config without these was
+    # the bug in #20.
+    cli_overrides = {
+        "agent_spec": agent_spec,
+        "graph_name": graph_name,
+        "stream_mode": stream_mode,
+        # bool flags only override when actually passed; otherwise fall back to
+        # TOML/env/default.
+        "async_mode": True if use_async else None,
+        "verbose": True if verbose else None,
+    }
+
+    if show_config:
+        print(
+            config_module.CodeConfig.resolve(
+                toml_start=Path.cwd(), overrides=cli_overrides
+            ).describe()
+        )
+        return
 
     try:
         # Handle -f/--file option: read message from file
@@ -1441,15 +1460,7 @@ def main(
         # (DEEPAGENT_AGENT_SPEC is canonical; DEEPAGENT_SPEC is a deprecated alias.)
         cfg = config_module.CodeConfig.resolve(
             toml_start=Path.cwd(),
-            overrides={
-                "agent_spec": agent_spec,
-                "graph_name": graph_name,
-                "stream_mode": stream_mode,
-                # bool flags only override when actually passed; otherwise fall
-                # back to TOML/env/default.
-                "async_mode": True if use_async else None,
-                "verbose": True if verbose else None,
-            },
+            overrides=cli_overrides,
         )
         final_spec = cfg.agent_spec
         final_graph_name_default = cfg.graph_name

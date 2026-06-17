@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2 - 2026-06-17
+
+### Fixed
+- `--show-config` now reflects CLI flags (#20). It resolved config WITHOUT the CLI
+  overrides, so `-a/--agent`, `-v/--verbose`, `--stream-mode`, etc. showed as
+  `[default]` and the reported `[source]` could contradict the real run (e.g. a
+  CLI flag set alongside an env var was reported as won by the env, but the run
+  used the flag). The same override dict now feeds both `--show-config` and the
+  actual run, so the diagnostic matches reality — CLI-set values show as `[override]`.
+
+
 ## 0.5.1 - 2026-06-16
 
 ### Changed
