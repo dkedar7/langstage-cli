@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.3 - 2026-06-17
+
+### Fixed
+- `--help` and runtime hints now lead with the canonical `LANGSTAGE_*` env vars and
+  `langstage.toml` (the legacy `DEEPAGENT_*` / `deepagents.toml` are noted only as
+  deprecated aliases), matching the README and `--show-config` output. Previously the
+  CLI's own help advertised the deprecated names as canonical and never mentioned
+  `LANGSTAGE_*` (#22).
+
+### Added
+- `--version` flag (reads the version from package metadata) — was missing (#22).
+
+
 ## 0.5.2 - 2026-06-17
 
 ### Fixed
