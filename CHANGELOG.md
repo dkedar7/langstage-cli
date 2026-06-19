@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4 - 2026-06-19
+
+### Fixed
+- `langstage_cli.__version__` was a hard-coded `"0.4.0"` and had drifted (the
+  package was at 0.5.3). It now derives from the installed distribution metadata
+  (`importlib.metadata.version`), so it always matches `pyproject.toml` and can't
+  drift again. (The `--version` flag already read metadata; this aligns the
+  exported module attribute.)
+
 ## 0.5.3 - 2026-06-17
 
 ### Fixed
