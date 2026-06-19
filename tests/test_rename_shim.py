@@ -27,6 +27,9 @@ def test_legacy_submodules_alias_the_new_ones():
 
 def test_legacy_package_reexports_public_api():
     import deepagent_code
+    import langstage_cli
 
     assert callable(deepagent_code.prepare_agent_input)
-    assert deepagent_code.__version__ == "0.4.0"
+    # The shim mirrors the new package's version (now derived from metadata),
+    # so assert equality rather than a hard-coded literal that would drift.
+    assert deepagent_code.__version__ == langstage_cli.__version__

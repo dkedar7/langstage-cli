@@ -8,6 +8,8 @@ tool-call serialization, content extraction) are available from
 ``langgraph_stream_parser.extractors`` if needed directly.
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from langgraph_stream_parser import (
     prepare_agent_input,
     stream_graph_updates,
@@ -16,7 +18,12 @@ from langgraph_stream_parser import (
     aresume_graph_from_interrupt,
 )
 
-__version__ = "0.4.0"
+# Single source of truth is the installed distribution metadata, so this can
+# never drift from pyproject's version (it was stuck at a stale "0.4.0").
+try:
+    __version__ = version("langstage-cli")
+except PackageNotFoundError:  # pragma: no cover - editable/source checkout
+    __version__ = "0.0.0+local"
 
 __all__ = [
     "prepare_agent_input",
