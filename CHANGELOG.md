@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.5 - 2026-06-20
+
+### Fixed
+- **Headline `langstage-cli --demo "hello"` crashed on a default Windows console
+  (cp1252) with `UnicodeEncodeError`** — the spinner's Braille frames and the
+  `✓`/`⏺` status glyphs couldn't encode. `main()` now reconfigures stdio to UTF-8
+  (`errors="replace"`) at entry, and the spinner thread can no longer crash the
+  process on a print error.
+- **`--help` showed a mojibake character** where an em-dash was in the `--demo`
+  option text; replaced with plain ASCII so help renders on any console.
+- **README `langstage.toml` example documented `[agent] workspace_root`**, which
+  is silently ignored — the real key is `[workspace] root`. Corrected.
+
 ## 0.5.4 - 2026-06-19
 
 ### Fixed
