@@ -190,11 +190,15 @@ class Spinner:
             frame = SPINNER_FRAMES[self.frame_idx % len(SPINNER_FRAMES)]
             elapsed = time.time() - self.start_time
             elapsed_str = f"{int(elapsed)}s"
-            print(
-                f"\r{CYAN}{frame}{RESET} {DIM}{self.message}... {elapsed_str}{RESET}",
-                end="",
-                flush=True,
-            )
+            # Never let a stdout hiccup in this daemon thread crash the run.
+            try:
+                print(
+                    f"\r{CYAN}{frame}{RESET} {DIM}{self.message}... {elapsed_str}{RESET}",
+                    end="",
+                    flush=True,
+                )
+            except (UnicodeEncodeError, ValueError):
+                pass
             self.frame_idx += 1
             time.sleep(0.08)
 
@@ -1348,7 +1352,7 @@ def run_conversation_loop(
     "--demo",
     is_flag=True,
     default=False,
-    help="Run with the built-in keyless demo agent — no API key needed",
+    help="Run with the built-in keyless demo agent (no API key needed)",
 )
 @click.option(
     "--show-config",
@@ -1403,6 +1407,16 @@ def main(
         langstage-cli --demo "try it with no API key"
         langstage-cli --show-config
     """
+    # Windows consoles default to cp1252, where the spinner (Braille frames) and
+    # status glyphs (✓ ⏺ —) raise UnicodeEncodeError — the documented
+    # `langstage-cli --demo "hello"` one-liner crashed before any output. Force
+    # UTF-8 with errors="replace" so a glyph can never crash the process.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # non-reconfigurable stream
+            pass
+
     if demo:
         if agent_spec:
             print(f"{RED}⏺ Error: --demo and -a/--agent are mutually exclusive{RESET}")

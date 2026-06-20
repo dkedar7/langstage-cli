@@ -134,7 +134,9 @@ Example `langstage.toml`:
 ```toml
 [agent]
 spec = "my_agent.py:graph"
-workspace_root = "."
+
+[workspace]
+root = "."
 
 [ui]
 verbose = true
