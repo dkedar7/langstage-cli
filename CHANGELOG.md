@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.6 - 2026-06-21
+
+### Fixed
+- **`--stream-mode values` crashed with a fatal Python error** instead of working
+  or erroring cleanly. `values` was advertised (README / `--help` / `--show-config`)
+  but the render path only supports `updates`/`messages`; the resulting `ValueError`
+  surfaced while the spinner **daemon thread** held stdout, producing
+  `Fatal Python error: _enter_buffered_busy ... at interpreter shutdown` (exit 127).
+  Now: `--stream-mode` is a `Choice {updates, messages}` (clean rejection of the
+  flag), the resolved value (incl. `LANGSTAGE_STREAM_MODE`, which bypasses the flag)
+  is validated up front with a readable error, and the stream loop always stops the
+  spinner via `try/finally` so no streaming error can crash the interpreter. README /
+  `--help` / docstring no longer list `values`.
+- **Dict-form messages now render** — a `CompiledGraph` returning
+  `{"role": "assistant", "content": ...}` produced no output. Fixed upstream in
+  `langgraph-stream-parser` 0.6.6; the core pin is modernized from the stale
+  `<0.5` to `>=0.6.6,<0.7` (base + `[agui]`) to deliver it.
+
 ## 0.5.5 - 2026-06-20
 
 ### Fixed

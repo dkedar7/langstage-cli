@@ -111,7 +111,7 @@ langstage-cli
 # Working directory
 export LANGSTAGE_WORKSPACE_ROOT="/path/to/workspace"
 
-# Stream mode (updates or values)
+# Stream mode (updates or messages)
 export LANGSTAGE_STREAM_MODE="updates"
 ```
 
@@ -162,7 +162,8 @@ Options:
   -f, --file PATH                 Read message from a file (any extension)
   --interactive/--no-interactive  Handle interrupts (default: interactive)
   --async-mode/--sync-mode        Async streaming (default: sync)
-  --stream-mode TEXT              Stream mode (updates or values)
+  --stream-mode [updates|messages]
+                                  Stream mode (default: updates)
   -v, --verbose                   Verbose output
 ```
 

@@ -15,12 +15,12 @@ from langstage_cli.cli import main
 def test_show_config_reflects_cli_flags():
     with CliRunner().isolated_filesystem():  # no stray toml
         r = CliRunner().invoke(
-            main, ["-a", "fromcli.py:graph", "-v", "--stream-mode", "values", "--show-config"]
+            main, ["-a", "fromcli.py:graph", "-v", "--stream-mode", "messages", "--show-config"]
         )
     assert r.exit_code == 0, r.output
     # CLI-set values appear with the [override] source, not [default].
     assert re.search(r"agent_spec\s*=\s*fromcli\.py:graph\s*\[override\]", r.output), r.output
-    assert re.search(r"stream_mode\s*=\s*values\s*\[override\]", r.output), r.output
+    assert re.search(r"stream_mode\s*=\s*messages\s*\[override\]", r.output), r.output
     assert re.search(r"verbose\s*=\s*True\s*\[override\]", r.output), r.output
 
 
