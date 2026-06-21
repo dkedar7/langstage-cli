@@ -48,14 +48,9 @@ No agent or API key yet? See the CLI working in one command:
 langstage-cli --demo "hello"
 ```
 
-Run with the default agent (requires `ANTHROPIC_API_KEY`):
+Point it at your own agent (any LangGraph `CompiledGraph`):
 ```bash
-export ANTHROPIC_API_KEY="your_api_key"
-langstage-cli
-```
-
-Or specify your own agent:
-```bash
+export ANTHROPIC_API_KEY="your_api_key"   # if your agent calls Anthropic
 langstage-cli -a path/to/your_agent.py:graph
 ```
 
@@ -64,11 +59,11 @@ This launches an interactive conversation loop with your agent.
 ## Usage
 
 ```bash
-# Use the default agent
-langstage-cli
+# Keyless demo agent — no API key, no agent of your own
+langstage-cli --demo "Hello"
 
-# Send a message directly
-langstage-cli "Hello, agent!"
+# Send a message directly to your agent
+langstage-cli -a my_agent.py:graph "Hello, agent!"
 
 # Specify a custom agent file
 langstage-cli -a my_agent.py:graph
@@ -96,9 +91,13 @@ langstage-cli --show-config
 ## Commands
 
 In the interactive loop:
-- `/q` or `/quit` - Exit
-- `/c` - Clear conversation history
-- `/h` or `/help` - Show help
+- `/quit` (`/q`, `/exit`) - Exit
+- `/clear` (`/c`) - Clear conversation history
+- `/reset` - Reset the session
+- `/config` (`/cfg`) - Show the resolved configuration
+- `/history` (`/hist`) - Show conversation history
+- `/help` (`/h`, `/?`) - Show help
+- **Tab** autocompletes commands; **Ctrl+C** exits
 
 ## Environment Variables
 
@@ -165,11 +164,34 @@ Options:
   --stream-mode [updates|messages]
                                   Stream mode (default: updates)
   -v, --verbose                   Verbose output
+  --demo                          Run with the built-in keyless demo agent
+  --show-config                   Print the resolved configuration and exit
+  --version                       Show the version and exit
 ```
 
 ## Creating Your Own Agent
 
-Your agent file should export a compiled LangGraph graph:
+Your agent file just needs to export a compiled LangGraph graph — `langstage-cli`
+runs **any** `CompiledGraph`. A minimal stdlib example (no extra deps):
+
+```python
+# my_agent.py — needs only langgraph (a base dependency)
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import MessagesState
+from langchain_core.messages import AIMessage
+
+def respond(state):
+    last = state["messages"][-1].content
+    return {"messages": [AIMessage(content=f"You said: {last}")]}
+
+g = StateGraph(MessagesState)
+g.add_node("respond", respond)
+g.add_edge(START, "respond")
+g.add_edge("respond", END)
+graph = g.compile()
+```
+
+Or a full deep agent (requires `pip install deepagents`):
 
 ```python
 # my_agent.py
@@ -178,14 +200,14 @@ from langgraph.checkpoint.memory import MemorySaver
 
 agent = create_deep_agent(
     name="My Agent",
-    model="anthropic:claude-sonnet-4-20250514",
+    model="anthropic:claude-sonnet-4-6",
     checkpointer=MemorySaver(),
 )
 ```
 
 Then run it:
 ```bash
-langstage-cli -a my_agent.py:agent
+langstage-cli -a my_agent.py:graph    # or :agent for the deepagents example
 ```
 
 ## Programmatic Use

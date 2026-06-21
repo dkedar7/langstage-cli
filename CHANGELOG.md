@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.7 - 2026-06-21
+
+### Docs
+- README no longer advertises a "default agent" command — there is no bundled
+  default; `langstage-cli` with no spec errors. Quick Start / Usage now lead with
+  `--demo` and `-a my_agent.py:graph`.
+- "Creating Your Own Agent" gained a stdlib-only `StateGraph` example (the prior
+  snippet needed `deepagents`, which isn't a base dep) and notes the deepagents
+  install for the full-agent variant.
+- CLI Options now list `--demo`, `--show-config`, `--version`; the interactive
+  Commands list matches the in-app `/help` (`/config`, `/history`, `/reset`, Tab).
+
 ## 0.5.6 - 2026-06-21
 
 ### Fixed
