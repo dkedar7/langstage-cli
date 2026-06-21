@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langstage-cli"
-version = "0.5.5"
+version = "0.5.6"
 description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,7 +25,9 @@ classifiers = [
 
 dependencies = [
     "langgraph>=0.2.0",
-    "langgraph-stream-parser>=0.3,<0.5",
+    # >=0.6.6 modernizes off the stale <0.5 pin and carries the dict-form-message
+    # fix, so a CompiledGraph returning {"role":...,"content":...} renders (gh #-dogfood).
+    "langgraph-stream-parser>=0.6.6,<0.7",
     "click>=8.0.0",
     "python-dotenv",
 ]
@@ -43,7 +45,7 @@ dev = [
     # pull deepagents + langchain + langgraph.
     "deepagents>=0.3",
 ]
-agui = ["langgraph-stream-parser[agui]>=0.4,<0.5"]
+agui = ["langgraph-stream-parser[agui]>=0.6.6,<0.7"]
 
 [project.scripts]
 langstage-cli = "langstage_cli.cli:main"

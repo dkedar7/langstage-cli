@@ -755,25 +755,26 @@ async def run_single_turn_async(
         spinner = Spinner("Thinking")
         spinner.start()
 
-        async for chunk in astream_graph_updates(
-            graph, input_data, config=config, stream_mode=stream_mode
-        ):
-            # Stop spinner on first chunk
-            if first_chunk:
-                spinner.stop()
-                first_chunk = False
+        try:
+            async for chunk in astream_graph_updates(
+                graph, input_data, config=config, stream_mode=stream_mode
+            ):
+                # Stop spinner on first chunk
+                if first_chunk:
+                    spinner.stop()
+                    first_chunk = False
 
-            print_chunk(chunk, verbose=verbose)
+                print_chunk(chunk, verbose=verbose)
 
-            if chunk.get("status") == "interrupt":
-                has_interrupt = True
-                # Count pending action requests
-                interrupt_data = chunk.get("interrupt", {})
-                action_requests = interrupt_data.get("action_requests", [])
-                num_pending_actions = len(action_requests) if action_requests else 1
-
-        # Ensure spinner is stopped even if no chunks received
-        if first_chunk:
+                if chunk.get("status") == "interrupt":
+                    has_interrupt = True
+                    # Count pending action requests
+                    interrupt_data = chunk.get("interrupt", {})
+                    action_requests = interrupt_data.get("action_requests", [])
+                    num_pending_actions = len(action_requests) if action_requests else 1
+        finally:
+            # Always stop the spinner (see sync variant) so a streaming error
+            # can't leave a daemon thread holding stdout at interpreter shutdown.
             spinner.stop()
 
         if has_interrupt and interactive:
@@ -804,25 +805,27 @@ def run_single_turn_sync(
         spinner = Spinner("Thinking")
         spinner.start()
 
-        for chunk in stream_graph_updates(
-            graph, input_data, config=config, stream_mode=stream_mode
-        ):
-            # Stop spinner on first chunk
-            if first_chunk:
-                spinner.stop()
-                first_chunk = False
+        try:
+            for chunk in stream_graph_updates(
+                graph, input_data, config=config, stream_mode=stream_mode
+            ):
+                # Stop spinner on first chunk
+                if first_chunk:
+                    spinner.stop()
+                    first_chunk = False
 
-            print_chunk(chunk, verbose=verbose)
+                print_chunk(chunk, verbose=verbose)
 
-            if chunk.get("status") == "interrupt":
-                has_interrupt = True
-                # Count pending action requests
-                interrupt_data = chunk.get("interrupt", {})
-                action_requests = interrupt_data.get("action_requests", [])
-                num_pending_actions = len(action_requests) if action_requests else 1
-
-        # Ensure spinner is stopped even if no chunks received
-        if first_chunk:
+                if chunk.get("status") == "interrupt":
+                    has_interrupt = True
+                    # Count pending action requests
+                    interrupt_data = chunk.get("interrupt", {})
+                    action_requests = interrupt_data.get("action_requests", [])
+                    num_pending_actions = len(action_requests) if action_requests else 1
+        finally:
+            # Always stop the spinner — if the stream raises, an unstopped daemon
+            # spinner thread holds stdout at interpreter shutdown, which crashes
+            # with "Fatal Python error: _enter_buffered_busy".
             spinner.stop()
 
         if has_interrupt and interactive:
@@ -1339,7 +1342,8 @@ def run_conversation_loop(
 )
 @click.option(
     "--stream-mode",
-    help="Stream mode for LangGraph (default: 'updates')",
+    type=click.Choice(["updates", "messages"]),
+    help="Stream mode: 'updates' (default) or 'messages' (token-level).",
 )
 @click.option(
     "--verbose",
@@ -1391,7 +1395,7 @@ def main(
     \b
     - LANGSTAGE_AGENT_SPEC: Agent location (same formats as above).
     - LANGSTAGE_WORKSPACE_ROOT: Working directory for the agent
-    - LANGSTAGE_STREAM_MODE: Stream mode for LangGraph (updates or values)
+    - LANGSTAGE_STREAM_MODE: Stream mode for LangGraph (updates or messages)
 
     Reads ~/.langstage/config.toml (global) and langstage.toml (project,
     walks up from cwd). Precedence: CLI args > env vars > project TOML >
@@ -1481,6 +1485,15 @@ def main(
         final_spec = cfg.agent_spec
         final_graph_name_default = cfg.graph_name
         final_stream_mode = cfg.stream_mode
+        # The CLI's render path only supports 'updates' / 'messages'. Reject anything
+        # else (e.g. LANGSTAGE_STREAM_MODE=values, which bypasses the flag's Choice)
+        # with a clean error instead of a fatal crash deep in the stream worker.
+        if final_stream_mode not in ("updates", "messages"):
+            print(
+                f"{RED}⏺ Error: unsupported stream mode {final_stream_mode!r} "
+                f"(use 'updates' or 'messages'){RESET}"
+            )
+            sys.exit(2)
         use_async = cfg.async_mode
         verbose = cfg.verbose
         # Only change directory when a workspace root was actually configured.
