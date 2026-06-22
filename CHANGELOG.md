@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.8 - 2026-06-22
+
+### Fixed
+- **`/help` leaked a literal `36m` and bled ANSI color.** The Commands block built
+  each command's alias list with `f", {CYAN}/{RESET}, {CYAN}/".join([""] + aliases)[4:]`,
+  whose `[4:]` slice cut into the leading `\x1b[36m` escape — printing stray `36m`
+  text and leaving color unterminated. Each alias is now rendered as its own clean
+  cyan `/token`. (gh #-dogfood)
+
 ## 0.5.7 - 2026-06-21
 
 ### Docs
