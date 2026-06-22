@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.9 - 2026-06-22
+
+### Fixed
+- **`--stream-mode messages` rendered an empty turn for a finished `AIMessage`.**
+  Single `messages` mode only carries LLM *token* streams, so an agent whose node
+  returns a complete (non-token-streamed) `AIMessage` — the exact shape the
+  README's "Creating Your Own Agent" example produces — rendered nothing (no
+  content, no error, exit 0). The default stream mode is now **`auto`** (dual
+  `updates`+`messages`): tokens stream live when the agent emits them, and the
+  finished-message content renders otherwise. `updates` and `messages` remain as
+  explicit single-mode choices (with `messages` documented as token-only). This
+  aligns the CLI with the web/JupyterLab/VS Code surfaces, which already stream
+  dual-mode. (Found by the dogfood routine.)
+
 ## 0.5.8 - 2026-06-22
 
 ### Fixed

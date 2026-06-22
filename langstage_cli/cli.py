@@ -736,6 +736,20 @@ def handle_interrupt_input(num_actions: int = 1) -> List[Dict[str, Any]]:
         sys.exit(0)
 
 
+def _resolve_stream_mode(stream_mode: str):
+    """Map the user-facing stream mode to what LangGraph actually streams.
+
+    'auto' = dual-channel ``["updates", "messages"]``: the parser renders LLM
+    tokens live when the agent streams them, and falls back to the finished
+    message content otherwise — so a node that returns a complete (non-token-
+    streamed) ``AIMessage`` still renders instead of an empty turn. (Bare
+    'messages' only carries LLM token streams, which is exactly why it was a
+    silent-blank trap — gh #-dogfood.) 'updates'/'messages' pass through as the
+    explicit single-mode power-user choices.
+    """
+    return ["updates", "messages"] if stream_mode == "auto" else stream_mode
+
+
 async def run_single_turn_async(
     graph,
     message: str,
@@ -746,6 +760,7 @@ async def run_single_turn_async(
 ) -> float:
     """Run a single turn of an async LangGraph graph. Returns total duration in seconds."""
     input_data = prepare_agent_input(message=message)
+    lg_stream_mode = _resolve_stream_mode(stream_mode)
     start_time = time.time()
 
     while True:
@@ -757,7 +772,7 @@ async def run_single_turn_async(
 
         try:
             async for chunk in astream_graph_updates(
-                graph, input_data, config=config, stream_mode=stream_mode
+                graph, input_data, config=config, stream_mode=lg_stream_mode
             ):
                 # Stop spinner on first chunk
                 if first_chunk:
@@ -796,6 +811,7 @@ def run_single_turn_sync(
 ) -> float:
     """Run a single turn of a sync LangGraph graph. Returns total duration in seconds."""
     input_data = prepare_agent_input(message=message)
+    lg_stream_mode = _resolve_stream_mode(stream_mode)
     start_time = time.time()
 
     while True:
@@ -807,7 +823,7 @@ def run_single_turn_sync(
 
         try:
             for chunk in stream_graph_updates(
-                graph, input_data, config=config, stream_mode=stream_mode
+                graph, input_data, config=config, stream_mode=lg_stream_mode
             ):
                 # Stop spinner on first chunk
                 if first_chunk:
@@ -1345,8 +1361,10 @@ def run_conversation_loop(
 )
 @click.option(
     "--stream-mode",
-    type=click.Choice(["updates", "messages"]),
-    help="Stream mode: 'updates' (default) or 'messages' (token-level).",
+    type=click.Choice(["auto", "updates", "messages"]),
+    help="Stream mode: 'auto' (default; token streaming when the agent emits "
+    "tokens, full-message fallback otherwise), 'updates' (whole-message), or "
+    "'messages' (token-level only — a finished AIMessage renders nothing here).",
 )
 @click.option(
     "--verbose",
@@ -1398,7 +1416,7 @@ def main(
     \b
     - LANGSTAGE_AGENT_SPEC: Agent location (same formats as above).
     - LANGSTAGE_WORKSPACE_ROOT: Working directory for the agent
-    - LANGSTAGE_STREAM_MODE: Stream mode for LangGraph (updates or messages)
+    - LANGSTAGE_STREAM_MODE: Stream mode for LangGraph (auto, updates, or messages)
 
     Reads ~/.langstage/config.toml (global) and langstage.toml (project,
     walks up from cwd). Precedence: CLI args > env vars > project TOML >
@@ -1491,10 +1509,10 @@ def main(
         # The CLI's render path only supports 'updates' / 'messages'. Reject anything
         # else (e.g. LANGSTAGE_STREAM_MODE=values, which bypasses the flag's Choice)
         # with a clean error instead of a fatal crash deep in the stream worker.
-        if final_stream_mode not in ("updates", "messages"):
+        if final_stream_mode not in ("auto", "updates", "messages"):
             print(
                 f"{RED}⏺ Error: unsupported stream mode {final_stream_mode!r} "
-                f"(use 'updates' or 'messages'){RESET}"
+                f"(use 'auto', 'updates', or 'messages'){RESET}"
             )
             sys.exit(2)
         use_async = cfg.async_mode
