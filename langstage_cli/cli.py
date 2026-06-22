@@ -847,7 +847,10 @@ def print_help():
     for cmd in sorted(commands, key=lambda c: c.name):
         aliases_str = ""
         if cmd.aliases:
-            aliases_str = f", {CYAN}/{RESET}, {CYAN}/".join([""] + cmd.aliases)[4:]
+            # Each alias as its own cyan "/x" token. The old
+            # `…join([""] + aliases)[4:]` sliced into the leading ANSI escape,
+            # leaking a literal "36m" and bleeding color (gh #-dogfood).
+            aliases_str = "".join(f", {CYAN}/{alias}{RESET}" for alias in cmd.aliases)
         print(f"  {CYAN}/{cmd.name}{RESET}{aliases_str}")
         print(f"    {DIM}{cmd.description}{RESET}")
 
