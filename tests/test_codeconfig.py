@@ -21,7 +21,7 @@ def _toml(d: Path, body: str) -> None:
 
 def test_defaults(isolated, tmp_path):
     cfg = CodeConfig.resolve(env={}, toml_start=tmp_path)
-    assert cfg.stream_mode == "updates"
+    assert cfg.stream_mode == "auto"
     assert cfg.graph_name == "graph"
     assert cfg.verbose is False
     assert cfg.async_mode is False

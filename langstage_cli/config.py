@@ -86,7 +86,7 @@ class CodeConfig(HostConfig):
     resolver); the even-older ``DEEPAGENT_SPEC`` alias is reconciled below.
     """
 
-    stream_mode: str = "updates"
+    stream_mode: str = "auto"
     graph_name: str = "graph"
     verbose: bool = False
     async_mode: bool = False
