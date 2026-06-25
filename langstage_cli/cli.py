@@ -493,6 +493,32 @@ def load_graph(spec: str, default_graph_name: str = "graph"):
     return graph, graph_name
 
 
+def _absolutize_file_spec(spec: str) -> str:
+    """Resolve a relative *file-path* agent spec to an absolute path against the
+    current cwd.
+
+    The CLI chdirs into ``LANGSTAGE_WORKSPACE_ROOT`` before loading the agent, so
+    a relative ``-a my_agent.py:graph`` would otherwise be looked up under the
+    workspace root instead of where the user actually invoked the command (and
+    put the file). Resolving the file part up front keeps the spec anchored to
+    the invocation cwd. Module specs (``pkg.mod:attr``) and already-absolute
+    paths pass through unchanged. (gh #30)
+    """
+    if not spec:
+        return spec
+    path_part, suffix = spec, ""
+    if ":" in spec:
+        head, _, tail = spec.rpartition(":")
+        # Same rule as load_graph: a trailing ':token' with no path separator is
+        # a graph name, not part of a Windows drive path.
+        if tail and "/" not in tail and "\\" not in tail:
+            path_part, suffix = head, f":{tail}"
+    # Only a .py file path is workspace-relative; a module path is not a file.
+    if path_part.endswith(".py"):
+        return f"{Path(path_part).expanduser().resolve()}{suffix}"
+    return spec
+
+
 def get_tool_arg_preview(args: Dict[str, Any]) -> str:
     """Get a preview of the first argument value (nanocode style)."""
     if not args:
@@ -1534,6 +1560,11 @@ def main(
                 print("  langstage-cli mypackage.module:agent")
                 print(f"\n{DIM}Or set the LANGSTAGE_AGENT_SPEC environment variable{RESET}")
                 sys.exit(1)
+
+        # Resolve a relative file-path spec against the invocation cwd BEFORE we
+        # chdir into the workspace root — otherwise `-a my_agent.py` is looked up
+        # under workspace_root, not where the user is and put the file. (gh #30)
+        final_spec = _absolutize_file_spec(final_spec)
 
         # Change to workspace root if specified
         if workspace_root:

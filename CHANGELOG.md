@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.10 - 2026-06-25
+
+### Fixed
+- **A relative `-a` / `LANGSTAGE_AGENT_SPEC` broke the moment `LANGSTAGE_WORKSPACE_ROOT`
+  was set.** The CLI `os.chdir()`s into the workspace root *before* loading the
+  agent, so a relative `my_agent.py:graph` was resolved against the workspace
+  root instead of the invocation cwd — failing with `Agent file not found` for a
+  file sitting right there in the current directory (both vars are documented
+  side-by-side, so setting both is expected usage). The file part of a relative
+  spec is now resolved to an absolute path *before* the chdir; module specs
+  (`pkg.mod:attr`) and absolute paths are unaffected. (Found by the dogfood
+  routine, gh #30.)
+
 ## 0.5.9 - 2026-06-22
 
 ### Fixed
