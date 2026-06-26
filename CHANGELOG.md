@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.11 - 2026-06-26
+
+### Fixed
+- **`--no-interactive` silently abandoned interrupts instead of auto-approving.**
+  The README documents `--no-interactive` as "auto-approve tool calls", but when
+  an agent hit a LangGraph `interrupt()` the resume loop only resolved it in
+  interactive mode — otherwise it `break`ed, dropping the interrupt and exiting 0
+  with the agent's post-interrupt work never run (a silent failure for the
+  automation/CI audience the flag exists for). It now auto-approves every pending
+  action and resumes the graph, so the agent runs to completion. (Found by the
+  dogfood routine, gh #32.)
+
 ## 0.5.10 - 2026-06-25
 
 ### Fixed

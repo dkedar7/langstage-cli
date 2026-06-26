@@ -821,6 +821,17 @@ async def run_single_turn_async(
         if has_interrupt and interactive:
             decisions = handle_interrupt_input(num_pending_actions)
             input_data = prepare_agent_input(decisions=decisions)
+        elif has_interrupt:
+            # --no-interactive: auto-approve every pending action and resume, so
+            # the agent runs to completion — the documented "auto-approve tool
+            # calls" behavior — instead of silently dropping the interrupt and
+            # exiting 0 with the agent's work abandoned. (gh #32)
+            print(
+                f"{DIM}Auto-approving {num_pending_actions} pending action(s) "
+                f"(--no-interactive){RESET}"
+            )
+            decisions = [{"type": "approve"} for _ in range(num_pending_actions)]
+            input_data = prepare_agent_input(decisions=decisions)
         else:
             break
 
@@ -872,6 +883,17 @@ def run_single_turn_sync(
 
         if has_interrupt and interactive:
             decisions = handle_interrupt_input(num_pending_actions)
+            input_data = prepare_agent_input(decisions=decisions)
+        elif has_interrupt:
+            # --no-interactive: auto-approve every pending action and resume, so
+            # the agent runs to completion — the documented "auto-approve tool
+            # calls" behavior — instead of silently dropping the interrupt and
+            # exiting 0 with the agent's work abandoned. (gh #32)
+            print(
+                f"{DIM}Auto-approving {num_pending_actions} pending action(s) "
+                f"(--no-interactive){RESET}"
+            )
+            decisions = [{"type": "approve"} for _ in range(num_pending_actions)]
             input_data = prepare_agent_input(decisions=decisions)
         else:
             break
