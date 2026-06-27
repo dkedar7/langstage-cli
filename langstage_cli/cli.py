@@ -583,11 +583,19 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             if verbose:
                 print(f"{DIM}[{node}]{RESET} {text}", end="")
             else:
-                # Print text output with cyan bullet
-                print(f"{CYAN}⏺{RESET} {render_markdown(text)}", end="")
+                # Print the cyan bullet ONCE at the start of a streamed AI turn,
+                # then append subsequent tokens with no marker. A token-streaming
+                # model emits one chunk per token, so prefixing the marker on
+                # every chunk jammed a `⏺` before every token. (gh #34)
+                if print_chunk._streaming_text:
+                    print(render_markdown(text), end="")
+                else:
+                    print(f"{CYAN}⏺{RESET} {render_markdown(text)}", end="")
+                    print_chunk._streaming_text = True
 
         # Handle tool calls - green tool name
         elif "tool_calls" in chunk:
+            print_chunk._streaming_text = False  # a non-text event ends the text run
             for tool_call in chunk["tool_calls"]:
                 tool_name = tool_call["name"]
                 args = tool_call.get("args", {})
@@ -599,11 +607,13 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
 
         # Handle tool results - indented with result preview
         elif "tool_result" in chunk:
+            print_chunk._streaming_text = False
             result = chunk.get("tool_result", "")
             preview = format_result_preview(str(result))
             print(f"  {DIM}   ↳ {preview}{RESET}")
 
     elif status == "interrupt":
+        print_chunk._streaming_text = False
         interrupt_data = chunk.get("interrupt", {})
         action_requests = interrupt_data.get("action_requests", [])
 
@@ -617,11 +627,18 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                     print(f"     {DIM}└─ {args_preview}{RESET}")
 
     elif status == "complete":
-        pass  # No output on complete (nanocode style)
+        print_chunk._streaming_text = False  # turn over; next turn starts a fresh marker
 
     elif status == "error":
+        print_chunk._streaming_text = False
         error_msg = chunk.get("error", "Unknown error")
         print(f"\n{RED}✗ Error: {error_msg}{RESET}")
+
+
+# Whether the current AI turn has already emitted its leading cyan bullet. Tracked
+# across per-chunk print_chunk() calls so a token-streamed reply gets one marker,
+# not one per token (gh #34). Reset on any non-text event and at each turn start.
+print_chunk._streaming_text = False
 
 
 def get_key() -> str:
@@ -787,6 +804,7 @@ async def run_single_turn_async(
     """Run a single turn of an async LangGraph graph. Returns total duration in seconds."""
     input_data = prepare_agent_input(message=message)
     lg_stream_mode = _resolve_stream_mode(stream_mode)
+    print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
     start_time = time.time()
 
     while True:
@@ -849,6 +867,7 @@ def run_single_turn_sync(
     """Run a single turn of a sync LangGraph graph. Returns total duration in seconds."""
     input_data = prepare_agent_input(message=message)
     lg_stream_mode = _resolve_stream_mode(stream_mode)
+    print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
     start_time = time.time()
 
     while True:
