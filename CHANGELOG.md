@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.12 - 2026-06-27
+
+### Fixed
+- **Token streaming jammed the `⏺` marker before every token.** A token-streaming
+  model emits one chunk per token, and `print_chunk` prefixed the cyan bullet on
+  *every* streaming chunk — so a real LLM reply rendered as
+  `⏺ alpha⏺  ⏺ beta⏺  ⏺ gamma` instead of `⏺ alpha beta gamma`. This hit the
+  default `auto` mode (and `messages`); only `updates` (one whole-message chunk)
+  escaped it. The marker is now printed once at the start of a streamed AI turn,
+  reset on any non-text event (tool call, interrupt, complete) and at each turn
+  start. (Found by the dogfood routine, gh #34.)
+
 ## 0.5.11 - 2026-06-26
 
 ### Fixed
