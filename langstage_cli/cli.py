@@ -53,6 +53,12 @@ MAGENTA, WHITE, GRAY = "\033[35m", "\033[37m", "\033[90m"
 BRIGHT_CYAN, BRIGHT_BLUE = "\033[96m", "\033[94m"
 BRIGHT_GREEN, BRIGHT_YELLOW = "\033[92m", "\033[93m"
 
+# Inherited HostConfig keys the terminal CLI never reads: it starts no server
+# (host/port/debug are inert) and the header box uses the loaded graph's name,
+# not `title`. `--show-config` / `/config` omit these so the diagnostic only
+# advertises knobs this surface actually honors. (gh #36)
+_INERT_KEYS = ["host", "port", "debug", "title"]
+
 # Spinner frames for thinking animation
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -1061,7 +1067,11 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
         # / TOML key that sets it.
         from langstage_cli.config import CodeConfig
 
-        for line in CodeConfig.resolve().describe().splitlines():
+        # Omit the inherited server/web keys the terminal CLI never honors: it
+        # starts no server (host/port/debug inert) and the header uses the graph
+        # name, not `title`. Advertising them with source attribution is the
+        # "advertised != honored" trap. (gh #36)
+        for line in CodeConfig.resolve().describe(omit_keys=_INERT_KEYS).splitlines():
             print(f"  {line}")
 
         configurable = config.get("configurable", {})
@@ -1532,10 +1542,11 @@ def main(
     }
 
     if show_config:
+        # See _INERT_KEYS: hide the server/web keys this surface ignores. (gh #36)
         print(
             config_module.CodeConfig.resolve(
                 toml_start=Path.cwd(), overrides=cli_overrides
-            ).describe()
+            ).describe(omit_keys=_INERT_KEYS)
         )
         return
 
