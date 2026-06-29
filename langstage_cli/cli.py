@@ -496,7 +496,30 @@ def load_graph(spec: str, default_graph_name: str = "graph"):
             graph_name = tail or default_graph_name
 
     graph = load_agent_spec(f"{path_or_module}:{graph_name}")
+    _ensure_checkpointer(graph)
     return graph, graph_name
+
+
+def _ensure_checkpointer(graph: Any) -> None:
+    """Attach an in-memory checkpointer if the graph has none.
+
+    The interactive loop sends only the latest message each turn and relies on
+    the graph's checkpointer (keyed by ``configurable.thread_id``) for multi-turn
+    memory. Many bring-your-own graphs — including the README's own minimal
+    example — compile without one, which left the "conversation loop" amnesiac
+    and ``/history`` erroring ("No checkpointer set"). Auto-attach an in-memory
+    default (same as the web stage) so memory and ``/history`` work out of the
+    box; a user-supplied checkpointer is left untouched. Pass your own (durable)
+    checkpointer for persistence across runs. (gh #38)
+    """
+    if getattr(graph, "checkpointer", None) is not None:
+        return
+    try:
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        graph.checkpointer = InMemorySaver()
+    except Exception:  # noqa: BLE001 - best effort; the loop still runs, just stateless
+        pass
 
 
 def _absolutize_file_spec(spec: str) -> str:
