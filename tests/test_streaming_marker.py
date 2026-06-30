@@ -60,3 +60,38 @@ def test_token_stream_renders_one_marker_end_to_end(tmp_path, monkeypatch):
     assert r.output.count("⏺") == 1, r.output
     for word in ("alpha", "beta", "gamma"):
         assert word in r.output, r.output
+
+
+# gh #40: the verbose branch must print the [node] label once per run too,
+# not before every token (the #34 fix only covered the non-verbose branch).
+
+
+def test_verbose_node_label_printed_once_per_run(capsys):
+    c.print_chunk._streaming_text = False
+    c.print_chunk._streaming_node = None
+    for tok in ["a", "b", "c"]:
+        c.print_chunk({"status": "streaming", "chunk": tok, "node": "respond"}, verbose=True)
+    out = capsys.readouterr().out
+    assert out.count("[respond]") == 1, out  # one label, NOT one per token (3)
+    assert "a" in out and "b" in out and "c" in out  # the tokens still stream
+
+
+def test_verbose_label_reprints_after_a_tool_call(capsys):
+    c.print_chunk._streaming_text = False
+    c.print_chunk._streaming_node = None
+    for tok in ["a", "b"]:
+        c.print_chunk({"status": "streaming", "chunk": tok, "node": "respond"}, verbose=True)
+    c.print_chunk({"status": "streaming", "tool_calls": [{"name": "t", "args": {}}]}, verbose=True)
+    for tok in ["c", "d"]:
+        c.print_chunk({"status": "streaming", "chunk": tok, "node": "respond"}, verbose=True)
+    out = capsys.readouterr().out
+    assert out.count("[respond]") == 2, out  # one per text run
+
+
+def test_verbose_label_reprints_on_node_change(capsys):
+    c.print_chunk._streaming_text = False
+    c.print_chunk._streaming_node = None
+    c.print_chunk({"status": "streaming", "chunk": "x", "node": "alpha"}, verbose=True)
+    c.print_chunk({"status": "streaming", "chunk": "y", "node": "beta"}, verbose=True)
+    out = capsys.readouterr().out
+    assert out.count("[alpha]") == 1 and out.count("[beta]") == 1, out
