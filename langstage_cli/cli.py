@@ -610,7 +610,18 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             text = chunk["chunk"]
             node = chunk.get("node", "unknown")
             if verbose:
-                print(f"{DIM}[{node}]{RESET} {text}", end="")
+                # Print the [node] label ONCE per streamed run — when a text run
+                # starts, or the node changes mid-stream — then append subsequent
+                # tokens with no label. A token-streaming model emits one chunk per
+                # token, so prefixing [node] on every chunk jammed it before every
+                # token. The #34 fix covered only the non-verbose branch. (gh #40)
+                if not print_chunk._streaming_text or print_chunk._streaming_node != node:
+                    if print_chunk._streaming_text:
+                        print()  # node changed mid-run — break before the new label
+                    print(f"{DIM}[{node}]{RESET} ", end="")
+                    print_chunk._streaming_node = node
+                    print_chunk._streaming_text = True
+                print(text, end="")
             else:
                 # Print the cyan bullet ONCE at the start of a streamed AI turn,
                 # then append subsequent tokens with no marker. A token-streaming
@@ -668,6 +679,9 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
 # across per-chunk print_chunk() calls so a token-streamed reply gets one marker,
 # not one per token (gh #34). Reset on any non-text event and at each turn start.
 print_chunk._streaming_text = False
+# The node whose tokens are currently streaming, so verbose mode prints the
+# [node] label once per run instead of before every token (gh #40).
+print_chunk._streaming_node = None
 
 
 def get_key() -> str:
