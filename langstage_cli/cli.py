@@ -1297,12 +1297,56 @@ def setup_readline_completion():
         readline.parse_and_bind("tab: complete")
 
 
+async def run_single_turn_agui(
+    agent,
+    message: str,
+    thread_id: str,
+    interactive: bool = True,
+    verbose: bool = False,
+) -> float:
+    """Experimental ``--agui`` path: stream a turn through the in-process AG-UI
+    adapter, rendering with the same ``print_chunk``. Text + tool calls/results
+    reach parity with the default path (and tool *results* are also shown).
+
+    An interrupt is DISPLAYED but not resumable here (ADR 0002 gate 2): we surface
+    a notice and return, so the user re-runs on the default path to approve actions.
+    """
+    from langstage_cli.agui_stream import agui_stream_updates
+
+    print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
+    start_time = time.time()
+    saw_interrupt = False
+    first_chunk = True
+    spinner = Spinner("Thinking")
+    spinner.start()
+    try:
+        async for chunk in agui_stream_updates(agent, message, thread_id):
+            if first_chunk:
+                spinner.stop()
+                first_chunk = False
+            print_chunk(chunk, verbose=verbose)
+            if chunk.get("status") == "interrupt":
+                saw_interrupt = True
+    finally:
+        spinner.stop()
+
+    if saw_interrupt:
+        print(
+            f"\n{YELLOW}⚠ The experimental --agui path can display interrupts but "
+            f"can't resume them yet (ADR 0002 gate 2).{RESET}"
+        )
+        print(f"{DIM}  Re-run without --agui to approve or edit pending actions.{RESET}")
+
+    return time.time() - start_time
+
+
 def run_conversation_loop(
     graph,
     config: Dict[str, Any],
     agent_name: str = "AgentCode",
     agent_description: Optional[str] = None,
     use_async: bool = False,
+    use_agui: bool = False,
     interactive: bool = True,
     verbose: bool = False,
     stream_mode: str = "updates",
@@ -1335,13 +1379,33 @@ def run_conversation_loop(
         "stream_mode": stream_mode,
     }
 
+    # Experimental --agui: build the in-process AG-UI agent ONCE per session
+    # (checkpointer attached by the core bridge) so multi-turn memory persists.
+    agui_agent = None
+    thread_id = ""
+    if use_agui:
+        if isinstance(config, dict):
+            thread_id = config.get("configurable", {}).get("thread_id", "") or ""
+        from langstage_cli.agui_stream import build_session_agent
+
+        try:
+            agui_agent = build_session_agent(graph, name=agent_name)
+        except RuntimeError as e:
+            print(f"{RED}⏺ {e}{RESET}")
+            return
+        print(f"{DIM}(experimental --agui: streaming via in-process AG-UI){RESET}")
+
     # Process initial message if provided
     if initial_message:
         print(f"\n{BOLD}{BRIGHT_BLUE}You{RESET}")
         print(f"{initial_message}")
         print()
 
-        if use_async:
+        if use_agui:
+            duration = asyncio.run(
+                run_single_turn_agui(agui_agent, initial_message, thread_id, interactive, verbose)
+            )
+        elif use_async:
             duration = asyncio.run(
                 run_single_turn_async(
                     graph, initial_message, config, interactive, verbose, stream_mode
@@ -1419,7 +1483,11 @@ def run_conversation_loop(
             print()  # Space before response
 
             # Run the agent
-            if use_async:
+            if use_agui:
+                duration = asyncio.run(
+                    run_single_turn_agui(agui_agent, user_input, thread_id, interactive, verbose)
+                )
+            elif use_async:
                 duration = asyncio.run(
                     run_single_turn_async(
                         graph, user_input, config, interactive, verbose, stream_mode
@@ -1494,6 +1562,14 @@ def run_conversation_loop(
     help="Run with the built-in keyless demo agent (no API key needed)",
 )
 @click.option(
+    "--agui",
+    is_flag=True,
+    default=False,
+    help="[experimental] Stream via the in-process AG-UI adapter instead of the "
+    "built-in event parser (text + tool calls/results; interrupts display only). "
+    'Requires the agui extra: pip install "langstage-cli[agui]".',
+)
+@click.option(
     "--show-config",
     "show_config",
     is_flag=True,
@@ -1510,6 +1586,7 @@ def main(
     stream_mode: Optional[str],
     verbose: Optional[bool],
     demo: bool,
+    agui: bool,
     show_config: bool,
 ):
     """
@@ -1691,6 +1768,7 @@ def main(
             agent_name=agent_name,
             agent_description=agent_description,
             use_async=use_async,
+            use_agui=agui,
             interactive=interactive,
             verbose=verbose,
             stream_mode=final_stream_mode,

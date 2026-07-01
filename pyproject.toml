@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langstage-cli"
-version = "0.5.15"
+version = "0.5.16"
 description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -44,6 +44,10 @@ dev = [
     # the example/tests run, but don't make every `pip install langstage-cli`
     # pull deepagents + langchain + langgraph.
     "deepagents>=0.3",
+    # The experimental --agui path (ADR 0002); pulled into dev so CI exercises
+    # tests/test_agui_stream.py instead of skipping it.
+    "ag-ui-langgraph>=0.0.41",
+    "fastapi",
 ]
 agui = ["langgraph-stream-parser[agui]>=0.6.6,<0.7"]
 
