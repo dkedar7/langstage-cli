@@ -117,3 +117,36 @@ def test_interrupt_surfaces_as_interrupt_chunk():
     interrupts = [c for c in chunks if c.get("status") == "interrupt"]
     assert interrupts, chunks
     assert interrupts[0]["interrupt"]["action_requests"][0]["tool"] == "approve"
+
+
+def test_interrupt_resume_continues_the_graph():
+    """gate 2: resuming via forwarded_props.command.resume drives the graph past
+    the interrupt (the default path's Command(resume=...) semantics)."""
+
+    def gate(state):
+        decision = interrupt({"action_requests": [{"tool": "approve", "args": {}}]})
+        return {"messages": [AIMessage(content=f"resolved: {decision}")]}
+
+    b = StateGraph(MessagesState)
+    b.add_node("gate", gate)
+    b.add_edge(START, "gate")
+    b.add_edge("gate", END)
+    agent = build_session_agent(b.compile(checkpointer=InMemorySaver()))
+
+    async def go():
+        # turn 1 -> interrupt
+        c1 = [c async for c in agui_stream_updates(agent, "go", "resume-test")]
+        assert any(c.get("status") == "interrupt" for c in c1), c1
+        # resume with a decision -> the graph must continue, not re-interrupt
+        c2 = [
+            c
+            async for c in agui_stream_updates(
+                agent, "go", "resume-test", resume={"decisions": [{"type": "accept"}]}
+            )
+        ]
+        return c2
+
+    resumed = asyncio.run(go())
+    assert not any(c.get("status") == "interrupt" for c in resumed), resumed
+    text = "".join(c["chunk"] for c in resumed if "chunk" in c)
+    assert "resolved:" in text and "accept" in text

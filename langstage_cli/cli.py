@@ -1308,34 +1308,51 @@ async def run_single_turn_agui(
     adapter, rendering with the same ``print_chunk``. Text + tool calls/results
     reach parity with the default path (and tool *results* are also shown).
 
-    An interrupt is DISPLAYED but not resumable here (ADR 0002 gate 2): we surface
-    a notice and return, so the user re-runs on the default path to approve actions.
+    Interrupts are fully supported (ADR 0002 gate 2, resolved): an interrupt is
+    displayed, the decision is collected, and the turn resumes via the AG-UI
+    adapter's ``forwarded_props.command.resume`` — mirroring the default path's
+    interrupt loop, including the ``--no-interactive`` auto-approve behavior.
     """
     from langstage_cli.agui_stream import agui_stream_updates
 
     print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
     start_time = time.time()
-    saw_interrupt = False
-    first_chunk = True
-    spinner = Spinner("Thinking")
-    spinner.start()
-    try:
-        async for chunk in agui_stream_updates(agent, message, thread_id):
-            if first_chunk:
-                spinner.stop()
-                first_chunk = False
-            print_chunk(chunk, verbose=verbose)
-            if chunk.get("status") == "interrupt":
-                saw_interrupt = True
-    finally:
-        spinner.stop()
+    resume = None  # first pass sends the message; later passes carry the decision
 
-    if saw_interrupt:
-        print(
-            f"\n{YELLOW}⚠ The experimental --agui path can display interrupts but "
-            f"can't resume them yet (ADR 0002 gate 2).{RESET}"
-        )
-        print(f"{DIM}  Re-run without --agui to approve or edit pending actions.{RESET}")
+    while True:
+        has_interrupt = False
+        num_pending_actions = 0
+        first_chunk = True
+        spinner = Spinner("Thinking")
+        spinner.start()
+        try:
+            async for chunk in agui_stream_updates(agent, message, thread_id, resume=resume):
+                if first_chunk:
+                    spinner.stop()
+                    first_chunk = False
+                print_chunk(chunk, verbose=verbose)
+                if chunk.get("status") == "interrupt":
+                    has_interrupt = True
+                    interrupt_data = chunk.get("interrupt", {})
+                    action_requests = interrupt_data.get("action_requests", [])
+                    num_pending_actions = len(action_requests) if action_requests else 1
+        finally:
+            spinner.stop()
+
+        if has_interrupt and interactive:
+            decisions = handle_interrupt_input(num_pending_actions)
+            resume = {"decisions": decisions}
+        elif has_interrupt:
+            # --no-interactive: auto-approve and resume so the agent runs to
+            # completion (same behavior as the default path, gh #32).
+            print(
+                f"{DIM}Auto-approving {num_pending_actions} pending action(s) "
+                f"(--no-interactive){RESET}"
+            )
+            decisions = [{"type": "approve"} for _ in range(num_pending_actions)]
+            resume = {"decisions": decisions}
+        else:
+            break
 
     return time.time() - start_time
 
@@ -1566,7 +1583,7 @@ def run_conversation_loop(
     is_flag=True,
     default=False,
     help="[experimental] Stream via the in-process AG-UI adapter instead of the "
-    "built-in event parser (text + tool calls/results; interrupts display only). "
+    "built-in event parser (text, tool calls/results, and interrupts). "
     'Requires the agui extra: pip install "langstage-cli[agui]".',
 )
 @click.option(

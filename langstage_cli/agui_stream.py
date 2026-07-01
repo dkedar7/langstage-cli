@@ -7,9 +7,9 @@ in-process (no web server) and maps AG-UI events onto the cli's existing
 
 This is the first step of ADR 0002 (retire the bespoke event layer, converge on
 AG-UI). Text + tool calls/results are at parity with the default path (and the
-AG-UI path additionally surfaces tool *results*). Interrupt **display** works;
-interrupt **resume** is not yet supported here (ADR 0002 gate 2) — the caller
-surfaces a notice and the user re-runs on the default path to approve actions.
+AG-UI path additionally surfaces tool *results*). Interrupts are fully supported:
+they DISPLAY as a ``CustomEvent(on_interrupt)`` and RESUME via
+``forwarded_props.command.resume`` (ADR 0002 gate 2, resolved).
 
 Requires the ``agui`` extra::
 
@@ -42,7 +42,7 @@ def build_session_agent(graph: Any, *, name: str = "langstage-cli") -> Any:
 
 
 async def agui_stream_updates(
-    agent: Any, message: str, thread_id: str
+    agent: Any, message: str, thread_id: str, resume: Any = None
 ) -> AsyncIterator[Dict[str, Any]]:
     """Drive ``agent.run()`` in-process and yield ``print_chunk``-compatible chunks.
 
@@ -50,8 +50,18 @@ async def agui_stream_updates(
     ToolCallResult -> tool_result; CustomEvent(on_interrupt) -> interrupt;
     RunError -> error; and a one-shot MessagesSnapshot -> text when nothing streamed.
     Always terminates with a ``complete`` chunk.
+
+    When ``resume`` is provided (an interrupt is being answered), it is delivered
+    as ``forwarded_props.command.resume`` — the field the ag-ui-langgraph adapter
+    turns into LangGraph's ``Command(resume=...)`` — so the graph continues past
+    the interrupt instead of re-interrupting. Mirrors the default path's
+    ``prepare_agent_input(decisions=...)`` -> ``Command(resume={"decisions": ...})``.
     """
     from ag_ui.core.types import RunAgentInput, UserMessage
+
+    forwarded_props: Dict[str, Any] = {}
+    if resume is not None:
+        forwarded_props = {"command": {"resume": resume}}
 
     run_input = RunAgentInput(
         thread_id=thread_id,
@@ -60,7 +70,7 @@ async def agui_stream_updates(
         messages=[UserMessage(id=str(uuid.uuid4()), role="user", content=message)],
         tools=[],
         context=[],
-        forwarded_props={},
+        forwarded_props=forwarded_props,
     )
 
     streamed_text = False
