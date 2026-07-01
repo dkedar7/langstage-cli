@@ -42,20 +42,50 @@ Run it: `uv run python -m spike.parity_check`
    and one-shot node output (`MessagesSnapshotEvent`) both map cleanly to the
    `chunk` contract.
 
-## Not covered here (next validation steps)
+## Phase A — tool calls + results (validated) ✓
 
-- **Tool calls / tool results.** The adapter maps `ToolCall{Start,Args,End}` →
-  `tool_calls`, but this wasn't run against a tool-using agent. Note: AG-UI's core
-  event set has **no dedicated tool-result event** — results arrive via messages,
-  so `tool_result` rendering must be recovered from the messages snapshot. Real gap
-  to design.
-- **Interrupt / resume (HITL).** Deliberately out of scope — ADR 0002 gate (2).
-  The cli has an interrupt path; parity there is the next thing to prove.
-- **Usage events.** Not checked.
+Against a keyless react agent that streams a `get_weather` tool call
+(`spike/fake_tools.py`, `spike/parity_tools.py`):
+
+- Tool-call name + args parity: **True**. Final-text parity: **True**.
+- **Correction to the earlier note:** AG-UI *does* have a dedicated tool-result
+  event — `ToolCallResultEvent` (`content`, `tool_call_id`) — it only appears with
+  a *streaming* agent (one-shot nodes hide it in the snapshot). So the AG-UI path is
+  a **superset**: it renders `↳ Sunny, 72F`, which the cli's current `updates` mode
+  does not emit. Mapping: `ToolCallStart/Args/End → tool_calls`,
+  `ToolCallResultEvent → tool_result`, `TextMessageContent → text`.
+- Real models stream args as `ToolCallArgsEvent` deltas (confirmed by splitting the
+  fake's arg stream); the messages snapshot carries them as a backstop.
+
+## Phase B — interrupt / resume (partly validated) ⚠
+
+Against a keyless `interrupt()` graph (`spike/observe_interrupt.py`):
+
+- **Interrupt DISPLAY maps cleanly ✓.** A LangGraph `interrupt()` surfaces as
+  `CustomEvent(name="on_interrupt", value=<payload JSON>)`, whose payload is exactly
+  the `action_requests` the cli's interrupt chunk wants.
+- **Resume does NOT round-trip out of the box ✗.** AG-UI resume uses a typed
+  `ResumeEntry(interrupt_id, status∈{resolved,cancelled}, payload)` — the id comes
+  from LangGraph state (`state.tasks[0].interrupts[0].id`), and the status vocabulary
+  differs from the cli's accept/reject/edit decisions. Resumed this way the graph
+  **re-interrupted** (same `on_interrupt`) and state never advanced, whereas the
+  current `Command`-resume path continues to `decision was:…`. Resume needs real
+  design — likely aligning how interrupts are *raised* with the AG-UI/HITL pattern
+  the adapter expects, not a raw `interrupt()`.
+
+Concrete evidence for why ADR 0002 gates the HITL surfaces on gate (2): **display is
+easy, resume is the hard part.**
+
+## Still open
+
+- **Resume round-trip** (the gate-2 blocker above) — needs AG-UI's expected
+  interrupt-raising pattern.
+- **Usage events** — not checked.
 
 ## Recommendation
 
-Green-light the real implementation: a hidden `--agui` / env flag in `cli.py`
-routing through `agui.build_agent` + an `agui_stream_updates` shaped like this
-spike, validated first on the demo stub (done) then a tool-using agent and the
-interrupt path, before any second surface.
+- **cli text + tools:** ready. A hidden `--agui` flag in `cli.py` routing through
+  `agui.build_agent` + an `agui_stream_updates` like this spike reaches parity (and
+  gains tool-result rendering), once ag-ui#2067 lands (or we accept fastapi+starlette).
+- **cli interrupts:** display now, but hold the resume path until gate (2)'s resume
+  round-trip is solved — that same solution is what the web/vscode HITL surfaces need.

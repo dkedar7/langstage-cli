@@ -76,6 +76,9 @@ async def agui_stream_updates(graph, message: str, *, node: str = "agent"):
             except json.JSONDecodeError:
                 args = {"_raw": tc["args"]}
             yield {"status": "streaming", "tool_calls": [{"name": tc["name"], "args": args}]}
+        elif t == "ToolCallResultEvent":
+            # AG-UI's dedicated tool-result event (appears with streaming agents).
+            yield {"status": "streaming", "tool_result": getattr(ev, "content", "")}
         elif t == "MessagesSnapshotEvent" and not streamed_text:
             # one-shot node (e.g. the keyless echo stub): text arrives as a final
             # snapshot rather than token deltas — recover it so parity holds.
