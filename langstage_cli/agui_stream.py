@@ -25,7 +25,7 @@ def ensure_agui_available() -> None:
     """Raise a clean, actionable error if the AG-UI adapter isn't installed."""
     try:
         import ag_ui_langgraph  # noqa: F401
-        from langgraph_stream_parser.agui import build_agent  # noqa: F401
+        from langstage_core.agui import build_agent  # noqa: F401
     except ImportError as e:  # pragma: no cover - exercised only without the extra
         raise RuntimeError(_IMPORT_HINT) from e
 
@@ -34,7 +34,7 @@ def build_session_agent(graph: Any, *, name: str = "langstage-cli") -> Any:
     """Wrap a compiled graph once per session (checkpointer attached by the core
     bridge), so multi-turn memory persists across turns."""
     ensure_agui_available()
-    from langgraph_stream_parser.agui import build_agent
+    from langstage_core.agui import build_agent
 
     return build_agent(graph, name=name)
 
@@ -58,7 +58,7 @@ async def agui_stream_updates(
     The mapping itself lives in the core (``agui.iter_chunk_frames``, 0.6.17) —
     shared with langstage-jupyter — so a rendering fix lands once.
     """
-    from langgraph_stream_parser.agui import iter_chunk_frames
+    from langstage_core.agui import iter_chunk_frames
 
     async for frame in iter_chunk_frames(agent, message, thread_id, resume=resume):
         yield frame
