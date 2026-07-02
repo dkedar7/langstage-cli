@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langstage-cli"
-version = "0.6.0"
+version = "0.6.1"
 description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,9 +25,11 @@ classifiers = [
 
 dependencies = [
     "langgraph>=0.2.0",
-    # >=0.6.6 modernizes off the stale <0.5 pin and carries the dict-form-message
-    # fix, so a CompiledGraph returning {"role":...,"content":...} renders (gh #-dogfood).
-    "langstage-core>=1.0",
+    # Since core 1.0 (ADR 0003) the CLI streams every turn ONLY through the
+    # in-process AG-UI adapter — there is no built-in parser fallback — so the
+    # AG-UI runtime (ag-ui-langgraph[fastapi] + uvicorn, via core's [agui] extra)
+    # is a HARD dep. A bare `pip install langstage-cli` must be able to run a turn.
+    "langstage-core[agui]>=1.0",
     "click>=8.0.0",
     "python-dotenv",
 ]
@@ -49,6 +51,8 @@ dev = [
     "ag-ui-langgraph>=0.0.41",
     "fastapi",
 ]
+# Redundant since AG-UI moved into base deps (core 1.0); kept as a no-op alias so
+# existing `pip install langstage-cli[agui]` scripts/READMEs still resolve.
 agui = ["langstage-core[agui]>=1.0"]
 
 [project.scripts]
