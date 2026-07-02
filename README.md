@@ -17,16 +17,16 @@ langstage-cli is the terminal stage of the **LangStage family**: write your agen
 | Terminal | langstage-cli | **you are here** |
 | VS Code | [langstage-vscode](https://github.com/dkedar7/langstage-vscode) | chat participant + stdio sidecar |
 | Reference agent | [langstage-hermes](https://github.com/dkedar7/langstage-hermes) | `LANGSTAGE_AGENT_SPEC=langstage_hermes.agent:graph` on any stage |
-| Shared core | [langgraph-stream-parser](https://github.com/dkedar7/langgraph-stream-parser) | typed events + config resolver behind every stage |
+| Shared core | [langstage-core](https://github.com/dkedar7/langstage-core) | typed events + config resolver behind every stage |
 
 📖 **Full documentation:** <https://dkedar7.github.io/langstage-docs/>
 
 ### Serve over AG-UI
 
-This surface's agent — any LangGraph `CompiledGraph` — can also be served over the [AG-UI protocol](https://github.com/dkedar7/langgraph-stream-parser):
+This surface's agent — any LangGraph `CompiledGraph` — can also be served over the [AG-UI protocol](https://github.com/dkedar7/langstage-core) as a standalone HTTP endpoint:
 
 ```bash
-pip install "langgraph-stream-parser[agui]"
+pip install "langstage-core[agui]"
 langstage-agui --agent my_agent.py:graph
 ```
 
@@ -212,14 +212,22 @@ langstage-cli -a my_agent.py:graph    # or :agent for the deepagents example
 
 ## Programmatic Use
 
+Since 1.0, streaming runs through the shared core's in-process AG-UI adapter
+(`pip install "langstage-core[agui]"`):
+
 ```python
-from langstage_cli import stream_graph_updates, prepare_agent_input
+import asyncio
+from langstage_core import load_agent_spec
+from langstage_core.agui import build_agent, iter_chunk_frames
 
-input_data = prepare_agent_input(message="Hello!")
+agent = build_agent(load_agent_spec("my_agent.py:graph"))
 
-for chunk in stream_graph_updates(graph, input_data):
-    if chunk.get("chunk"):
-        print(chunk["chunk"], end="")
+async def main():
+    async for chunk in iter_chunk_frames(agent, "Hello!", thread_id="s1"):
+        if chunk.get("chunk"):
+            print(chunk["chunk"], end="")
+
+asyncio.run(main())
 ```
 
 ## License
