@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.1 - 2026-07-02
+
+### Fixed
+- **Bare `pip install langstage-cli` couldn't run a turn.** 0.6.0 made AG-UI the
+  only streaming path but left the AG-UI runtime (`ag-ui-langgraph[fastapi]`) in
+  the optional `[agui]` extra, so a default install hit an ImportError on the first
+  message. The runtime is now a base dependency (via `langstage-core[agui]`); the
+  `[agui]` extra is a redundant no-op alias.
+
+## 0.6.0 - 2026-07-02
+
+### Changed
+- **AG-UI is now the CLI's only streaming path (ADR 0003).** Every turn streams
+  through `langstage-core`'s in-process AG-UI adapter; removed the
+  `stream_graph_updates` turn functions. The `--agui`/`--async`/`--stream-mode`
+  flags are accepted-and-ignored for one release.
+- **Repointed to `langstage-core` 1.0** (the rename of `langgraph-stream-parser`).
+
 ## 0.5.12 - 2026-06-27
 
 ### Fixed
