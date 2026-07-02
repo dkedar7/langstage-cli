@@ -18,7 +18,7 @@ from langchain_core.tools import tool  # noqa: E402
 from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.types import interrupt  # noqa: E402
-from langgraph_stream_parser import load_agent_spec  # noqa: E402
+from langstage_core import load_agent_spec  # noqa: E402
 
 from langstage_cli.agui_stream import agui_stream_updates, build_session_agent  # noqa: E402
 
@@ -32,7 +32,7 @@ def _collect(agent, msg: str) -> List[dict]:
 
 def test_text_parity_on_demo_stub():
     """The keyless echo stub round-trips through AG-UI and reflects the input."""
-    agent = build_session_agent(load_agent_spec("langgraph_stream_parser.demo.stub:graph"))
+    agent = build_session_agent(load_agent_spec("langstage_core.demo.stub:graph"))
     chunks = _collect(agent, "hello agui test")
     text = "".join(c["chunk"] for c in chunks if "chunk" in c)
     assert "hello agui test" in text

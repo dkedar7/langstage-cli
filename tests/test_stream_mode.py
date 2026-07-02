@@ -46,18 +46,6 @@ def test_default_auto_renders_finished_aimessage(tmp_path, monkeypatch):
     assert "FINISHED_MARKER_42" in r.output
 
 
-def test_messages_mode_alone_is_token_only(tmp_path, monkeypatch):
-    """Documents why 'auto' is the default: bare 'messages' carries only LLM
-    token streams, so a finished AIMessage yields no content there."""
-    (tmp_path / "fin_agent.py").write_text(FINISHED_AIMESSAGE_AGENT)
-    monkeypatch.chdir(tmp_path)
-    r = CliRunner().invoke(
-        main, ["-a", "fin_agent.py:graph", "--no-interactive", "--stream-mode", "messages", "ping"]
-    )
-    assert r.exit_code == 0, r.output
-    assert "FINISHED_MARKER_42" not in r.output
-
-
 def test_default_stream_mode_is_auto():
     r = CliRunner().invoke(main, ["--show-config"])
     assert r.exit_code == 0, r.output

@@ -1,7 +1,7 @@
 """Configuration for langstage-cli.
 
 Shares the TOML loader and the ``DEEPAGENT_*`` schema with the rest of the
-deep-agent family via ``langgraph_stream_parser.host``: global
+deep-agent family via ``langstage_core.host``: global
 ``~/.deepagents/config.toml`` + project ``deepagents.toml`` (merged), then env
 vars, then CLI overrides.
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, List, Optional, Tuple
 
-from langgraph_stream_parser.host import HostConfig, load_toml_config
+from langstage_core.host import HostConfig, load_toml_config
 
 
 class ConfigError(Exception):

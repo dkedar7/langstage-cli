@@ -18,12 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
-from langgraph_stream_parser import (
-    prepare_agent_input,
-    stream_graph_updates,
-    astream_graph_updates,
-    load_agent_spec,
-)
+from langstage_core import load_agent_spec
 from langstage_cli import config as config_module
 
 # Platform-specific imports for keyboard input
@@ -467,7 +462,7 @@ def load_graph(spec: str, default_graph_name: str = "graph"):
     Load a graph from either a file path or module path.
 
     Delegates the actual import to the shared
-    ``langgraph_stream_parser.host.load_agent_spec`` loader, while preserving
+    ``langstage_core.host.load_agent_spec`` loader, while preserving
     this CLI's convenience of a bare path (no ``:name``), which defaults to
     ``default_graph_name``.
 
@@ -834,133 +829,6 @@ def _resolve_stream_mode(stream_mode: str):
     explicit single-mode power-user choices.
     """
     return ["updates", "messages"] if stream_mode == "auto" else stream_mode
-
-
-async def run_single_turn_async(
-    graph,
-    message: str,
-    config: Optional[Dict[str, Any]] = None,
-    interactive: bool = True,
-    verbose: bool = False,
-    stream_mode: str = "updates",
-) -> float:
-    """Run a single turn of an async LangGraph graph. Returns total duration in seconds."""
-    input_data = prepare_agent_input(message=message)
-    lg_stream_mode = _resolve_stream_mode(stream_mode)
-    print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
-    start_time = time.time()
-
-    while True:
-        has_interrupt = False
-        num_pending_actions = 0
-        first_chunk = True
-        spinner = Spinner("Thinking")
-        spinner.start()
-
-        try:
-            async for chunk in astream_graph_updates(
-                graph, input_data, config=config, stream_mode=lg_stream_mode
-            ):
-                # Stop spinner on first chunk
-                if first_chunk:
-                    spinner.stop()
-                    first_chunk = False
-
-                print_chunk(chunk, verbose=verbose)
-
-                if chunk.get("status") == "interrupt":
-                    has_interrupt = True
-                    # Count pending action requests
-                    interrupt_data = chunk.get("interrupt", {})
-                    action_requests = interrupt_data.get("action_requests", [])
-                    num_pending_actions = len(action_requests) if action_requests else 1
-        finally:
-            # Always stop the spinner (see sync variant) so a streaming error
-            # can't leave a daemon thread holding stdout at interpreter shutdown.
-            spinner.stop()
-
-        if has_interrupt and interactive:
-            decisions = handle_interrupt_input(num_pending_actions)
-            input_data = prepare_agent_input(decisions=decisions)
-        elif has_interrupt:
-            # --no-interactive: auto-approve every pending action and resume, so
-            # the agent runs to completion — the documented "auto-approve tool
-            # calls" behavior — instead of silently dropping the interrupt and
-            # exiting 0 with the agent's work abandoned. (gh #32)
-            print(
-                f"{DIM}Auto-approving {num_pending_actions} pending action(s) "
-                f"(--no-interactive){RESET}"
-            )
-            decisions = [{"type": "approve"} for _ in range(num_pending_actions)]
-            input_data = prepare_agent_input(decisions=decisions)
-        else:
-            break
-
-    return time.time() - start_time
-
-
-def run_single_turn_sync(
-    graph,
-    message: str,
-    config: Optional[Dict[str, Any]] = None,
-    interactive: bool = True,
-    verbose: bool = False,
-    stream_mode: str = "updates",
-) -> float:
-    """Run a single turn of a sync LangGraph graph. Returns total duration in seconds."""
-    input_data = prepare_agent_input(message=message)
-    lg_stream_mode = _resolve_stream_mode(stream_mode)
-    print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
-    start_time = time.time()
-
-    while True:
-        has_interrupt = False
-        num_pending_actions = 0
-        first_chunk = True
-        spinner = Spinner("Thinking")
-        spinner.start()
-
-        try:
-            for chunk in stream_graph_updates(
-                graph, input_data, config=config, stream_mode=lg_stream_mode
-            ):
-                # Stop spinner on first chunk
-                if first_chunk:
-                    spinner.stop()
-                    first_chunk = False
-
-                print_chunk(chunk, verbose=verbose)
-
-                if chunk.get("status") == "interrupt":
-                    has_interrupt = True
-                    # Count pending action requests
-                    interrupt_data = chunk.get("interrupt", {})
-                    action_requests = interrupt_data.get("action_requests", [])
-                    num_pending_actions = len(action_requests) if action_requests else 1
-        finally:
-            # Always stop the spinner — if the stream raises, an unstopped daemon
-            # spinner thread holds stdout at interpreter shutdown, which crashes
-            # with "Fatal Python error: _enter_buffered_busy".
-            spinner.stop()
-
-        if has_interrupt and interactive:
-            decisions = handle_interrupt_input(num_pending_actions)
-            input_data = prepare_agent_input(decisions=decisions)
-        elif has_interrupt:
-            # --no-interactive: auto-approve every pending action and resume, so
-            # the agent runs to completion — the documented "auto-approve tool
-            # calls" behavior — instead of silently dropping the interrupt and
-            # exiting 0 with the agent's work abandoned. (gh #32)
-            print(
-                f"{DIM}Auto-approving {num_pending_actions} pending action(s) "
-                f"(--no-interactive){RESET}"
-            )
-            decisions = [{"type": "approve"} for _ in range(num_pending_actions)]
-            input_data = prepare_agent_input(decisions=decisions)
-        else:
-            break
-
-    return time.time() - start_time
 
 
 def print_help():
@@ -1396,21 +1264,19 @@ def run_conversation_loop(
         "stream_mode": stream_mode,
     }
 
-    # Experimental --agui: build the in-process AG-UI agent ONCE per session
-    # (checkpointer attached by the core bridge) so multi-turn memory persists.
-    agui_agent = None
+    # Build the in-process AG-UI agent ONCE per session (checkpointer attached by
+    # the core bridge) so multi-turn memory persists. Since langstage-core 1.0 the
+    # AG-UI adapter is the only streaming path.
     thread_id = ""
-    if use_agui:
-        if isinstance(config, dict):
-            thread_id = config.get("configurable", {}).get("thread_id", "") or ""
-        from langstage_cli.agui_stream import build_session_agent
+    if isinstance(config, dict):
+        thread_id = config.get("configurable", {}).get("thread_id", "") or ""
+    from langstage_cli.agui_stream import build_session_agent
 
-        try:
-            agui_agent = build_session_agent(graph, name=agent_name)
-        except RuntimeError as e:
-            print(f"{RED}⏺ {e}{RESET}")
-            return
-        print(f"{DIM}(experimental --agui: streaming via in-process AG-UI){RESET}")
+    try:
+        agui_agent = build_session_agent(graph, name=agent_name)
+    except RuntimeError as e:
+        print(f"{RED}⏺ {e}{RESET}")
+        return
 
     # Process initial message if provided
     if initial_message:
@@ -1418,20 +1284,9 @@ def run_conversation_loop(
         print(f"{initial_message}")
         print()
 
-        if use_agui:
-            duration = asyncio.run(
-                run_single_turn_agui(agui_agent, initial_message, thread_id, interactive, verbose)
-            )
-        elif use_async:
-            duration = asyncio.run(
-                run_single_turn_async(
-                    graph, initial_message, config, interactive, verbose, stream_mode
-                )
-            )
-        else:
-            duration = run_single_turn_sync(
-                graph, initial_message, config, interactive, verbose, stream_mode
-            )
+        duration = asyncio.run(
+            run_single_turn_agui(agui_agent, initial_message, thread_id, interactive, verbose)
+        )
         print_timing(duration, verbose)
         print()
 
@@ -1499,21 +1354,10 @@ def run_conversation_loop(
 
             print()  # Space before response
 
-            # Run the agent
-            if use_agui:
-                duration = asyncio.run(
-                    run_single_turn_agui(agui_agent, user_input, thread_id, interactive, verbose)
-                )
-            elif use_async:
-                duration = asyncio.run(
-                    run_single_turn_async(
-                        graph, user_input, config, interactive, verbose, stream_mode
-                    )
-                )
-            else:
-                duration = run_single_turn_sync(
-                    graph, user_input, config, interactive, verbose, stream_mode
-                )
+            # Run the agent (AG-UI is the only streaming path since langstage-core 1.0)
+            duration = asyncio.run(
+                run_single_turn_agui(agui_agent, user_input, thread_id, interactive, verbose)
+            )
             print_timing(duration, verbose)
             print()
 
@@ -1655,7 +1499,7 @@ def main(
             print(f"{RED}⏺ Error: --demo and -a/--agent are mutually exclusive{RESET}")
             sys.exit(1)
         # The keyless echo agent shipped with the shared core.
-        agent_spec = "langgraph_stream_parser.demo.stub:graph"
+        agent_spec = "langstage_core.demo.stub:graph"
 
     # CLI flags are the highest-precedence config layer. Build the override dict
     # ONCE and use it for both --show-config and the real run, so the diagnostic
