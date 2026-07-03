@@ -1,5 +1,5 @@
 """
-Default agent configuration for deepagent-code.
+Default agent configuration for langstage-cli.
 
 This agent is used when no custom agent is specified. It provides basic
 conversation capabilities with filesystem access and bash command execution.

@@ -2,7 +2,7 @@
 
 **The terminal stage for your LangGraph agent.** A Claude Code-style CLI that runs *any* LangGraph `CompiledGraph` — yours, not a bundled one — with streaming, tool-call rendering, and human-in-the-loop approval.
 
-> Renamed from **deepagent-code** (the old package name now just installs this one, and the `deepagent-code` command still works).
+> Renamed from **deepagent-code** (the old package name now just installs this one, and the `deepagent-code` command still works). Not to be confused with LangChain's **`deepagents-code`** (`dcode`) — that's a separate project; `langstage-cli` is the terminal stage of the [LangStage family](#every-stage-for-your-langgraph-agent).
 
 ![langstage-cli](examples/image.png)
 
