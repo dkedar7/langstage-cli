@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.6 - 2026-07-03
+
+### Changed
+- **Workspace root is now applied through the shared `core.apply_workspace()`
+  (ADR 0005).** Replaces the local `os.chdir` block with the one source of truth:
+  the resolved workspace is published (env + active) so the agent's tools can read
+  `core.workspace_root()`, and cli still `chdir`s into it (it's single-process) when
+  one was explicitly configured. Same observable behavior, minus the drift — plus a
+  configured workspace that doesn't exist yet is now **created** (via
+  `apply_workspace`'s `ensure()`) instead of silently ignored. Requires
+  `langstage-core>=1.0.7`.
+
 ## 0.6.5 - 2026-07-03
 
 ### Added

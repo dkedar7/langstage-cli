@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
-from langstage_core import load_agent_spec
+from langstage_core import apply_workspace, load_agent_spec
 from langstage_cli import config as config_module
 
 # Platform-specific imports for keyboard input
@@ -1673,10 +1673,9 @@ def main(
             sys.exit(2)
         use_async = cfg.async_mode
         verbose = cfg.verbose
-        # Only change directory when a workspace root was actually configured.
-        workspace_root = (
-            cfg.workspace_root if cfg.sources.get("workspace_root") != "default" else None
-        )
+        # Whether a workspace root was explicitly configured (vs the default cwd);
+        # cli chdirs into it only when it was, matching prior behavior.
+        workspace_explicit = cfg.sources.get("workspace_root") != "default"
 
         # If no spec provided, try the default agent
         if not final_spec:
@@ -1696,11 +1695,12 @@ def main(
         # under workspace_root, not where the user is and put the file. (gh #30)
         final_spec = _absolutize_file_spec(final_spec)
 
-        # Change to workspace root if specified
-        if workspace_root:
-            workspace_path = Path(workspace_root).expanduser().resolve()
-            if workspace_path.exists():
-                os.chdir(workspace_path)
+        # Apply the resolved workspace as the single source of truth (ADR 0005):
+        # publish it (env + active) so the agent's tools can read workspace_root(),
+        # and chdir into it (cli is single-process) when one was explicitly
+        # configured. Runs AFTER _absolutize_file_spec so `-a my_agent.py` still
+        # resolves against the invocation cwd, not the workspace (gh #30).
+        apply_workspace(Path(cfg.workspace_root).expanduser(), chdir=workspace_explicit)
 
         # Load the graph with a spinner (both are chrome; quiet mode stays silent
         # until the reply). (gh #53)
