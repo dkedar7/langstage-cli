@@ -618,15 +618,20 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                     print_chunk._streaming_text = True
                 print(text, end="")
             else:
-                # Print the cyan bullet ONCE at the start of a streamed AI turn,
-                # then append subsequent tokens with no marker. A token-streaming
-                # model emits one chunk per token, so prefixing the marker on
-                # every chunk jammed a `⏺` before every token. (gh #34)
-                if print_chunk._streaming_text:
-                    print(render_markdown(text), end="")
-                else:
+                # Print the cyan bullet ONCE at the start of a streamed AI turn AND
+                # again when the node changes mid-turn, then append subsequent tokens
+                # with no marker. A token-streaming model emits one chunk per token, so
+                # a per-chunk marker jammed a `⏺` before every token (gh #34); but a
+                # per-turn-only marker ran two nodes' messages together on one line with
+                # no separator (gh #43). Break + re-mark on a node change.
+                if not print_chunk._streaming_text or print_chunk._streaming_node != node:
+                    if print_chunk._streaming_text:
+                        print()  # node changed mid-turn — break before the new marker
                     print(f"{CYAN}⏺{RESET} {render_markdown(text)}", end="")
+                    print_chunk._streaming_node = node
                     print_chunk._streaming_text = True
+                else:
+                    print(render_markdown(text), end="")
 
         # Handle tool calls - green tool name
         elif "tool_calls" in chunk:
@@ -1171,8 +1176,10 @@ async def run_single_turn_agui(
     thread_id: str,
     interactive: bool = True,
     verbose: bool = False,
-) -> float:
-    """Experimental ``--agui`` path: stream a turn through the in-process AG-UI
+) -> tuple[float, bool]:
+    """Stream a turn through the in-process AG-UI adapter. Returns
+    ``(elapsed_seconds, had_error)`` — ``had_error`` is True if any frame reported
+    ``status == "error"``, so a single-shot caller can exit non-zero (gh #47).
     adapter, rendering with the same ``print_chunk``. Text + tool calls/results
     reach parity with the default path (and tool *results* are also shown).
 
@@ -1185,6 +1192,7 @@ async def run_single_turn_agui(
 
     print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
     start_time = time.time()
+    had_error = False
     resume = None  # first pass sends the message; later passes carry the decision
 
     while True:
@@ -1199,6 +1207,8 @@ async def run_single_turn_agui(
                     spinner.stop()
                     first_chunk = False
                 print_chunk(chunk, verbose=verbose)
+                if chunk.get("status") == "error":
+                    had_error = True
                 if chunk.get("status") == "interrupt":
                     has_interrupt = True
                     interrupt_data = chunk.get("interrupt", {})
@@ -1222,7 +1232,7 @@ async def run_single_turn_agui(
         else:
             break
 
-    return time.time() - start_time
+    return time.time() - start_time, had_error
 
 
 def run_conversation_loop(
@@ -1284,15 +1294,17 @@ def run_conversation_loop(
         print(f"{initial_message}")
         print()
 
-        duration = asyncio.run(
+        duration, had_error = asyncio.run(
             run_single_turn_agui(agui_agent, initial_message, thread_id, interactive, verbose)
         )
         print_timing(duration, verbose)
         print()
 
-        # Exit after single-shot execution
+        # Exit after single-shot execution. Propagate the turn's error status so
+        # main() can exit non-zero — a single-shot/piped caller must be able to tell
+        # a failed run from a success (gh #47).
         if single_shot:
-            return
+            return had_error
 
     # Main conversation loop
     while True:
@@ -1355,7 +1367,7 @@ def run_conversation_loop(
             print()  # Space before response
 
             # Run the agent (AG-UI is the only streaming path since langstage-core 1.0)
-            duration = asyncio.run(
+            duration, _ = asyncio.run(
                 run_single_turn_agui(agui_agent, user_input, thread_id, interactive, verbose)
             )
             print_timing(duration, verbose)
@@ -1622,8 +1634,10 @@ def main(
         agent_description = get_agent_description(graph)
 
         # Run the conversation loop
-        # Single-shot mode: exit after processing if message was provided via CLI
-        run_conversation_loop(
+        # Single-shot mode: exit after processing if message was provided via CLI.
+        # In single-shot mode it returns whether the agent turn errored, so a piped /
+        # scripted caller can tell a failed run from a success (gh #47).
+        turn_had_error = run_conversation_loop(
             graph=graph,
             config=config_dict,
             agent_name=agent_name,
@@ -1636,6 +1650,8 @@ def main(
             initial_message=message,
             single_shot=bool(message),
         )
+        if turn_had_error:
+            sys.exit(1)
 
     except FileNotFoundError as e:
         print(f"{RED}⏺ Error: {e}{RESET}")

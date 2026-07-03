@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from langstage_cli import config
 
@@ -70,13 +69,17 @@ def test_walks_up_for_project_config(tmp_path, monkeypatch):
     assert sources == [project / "deepagents.toml"]
 
 
-def test_invalid_toml_raises(tmp_path, monkeypatch):
+def test_invalid_toml_degrades_gracefully(tmp_path, monkeypatch):
+    # Since langstage-core 1.0.3 (gh langstage-jupyter#42) a malformed config file is
+    # skipped with a stderr notice, NOT raised — a typo in a config must not crash the
+    # CLI (config resolves at import time on sibling surfaces). load_config() returns
+    # usable (empty) config instead of raising.
     home = tmp_path / "home"
     _write(home / "config.toml", "this is = not = valid toml\n")
     monkeypatch.setenv("DEEPAGENTS_CONFIG_HOME", str(home))
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(config.ConfigError):
-        config.load_config()
+    cfg, _sources = config.load_config()  # must NOT raise
+    assert cfg == {}  # the malformed file was skipped, no garbage loaded
 
 
 def test_get_dotted_path():

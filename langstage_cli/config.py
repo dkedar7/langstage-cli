@@ -11,7 +11,6 @@ lookups.
 """
 
 import os
-import tomllib
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,15 +24,14 @@ class ConfigError(Exception):
 
 
 def load_config(start: Optional[Path] = None) -> Tuple[dict, List[Path]]:
-    """Load global + project ``deepagents.toml``, merged (project wins).
+    """Load global + project ``langstage.toml`` (legacy ``deepagents.toml``), merged.
 
-    Delegates to the shared loader so every deep-agent tool reads the same
-    files with the same precedence. Returns ``(config, sources_used)``.
+    Delegates to the shared loader so every LangStage tool reads the same files with
+    the same precedence. Since langstage-core 1.0.3 a malformed config file is skipped
+    with a stderr notice rather than raising — a typo in a config file must not crash
+    the CLI (gh langstage-jupyter#42). Returns ``(config, sources_used)``.
     """
-    try:
-        return load_toml_config(start)
-    except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"Invalid TOML: {e}") from e
+    return load_toml_config(start)
 
 
 def get(config: dict, dotted_key: str, default: Any = None) -> Any:
