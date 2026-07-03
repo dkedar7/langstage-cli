@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.3 - 2026-07-02
+
+### Changed
+- **Scrubbed the leftover `deepagent-code` branding and disambiguated from
+  LangChain's `dcode` (gh #42).** The default agent display name (used when a graph
+  exposes no name) is now `Agent` instead of the old product name `AgentCode`, the
+  `examples/agent.py` header no longer says "deepagent-code", and the README makes
+  clear `langstage-cli` is **not** LangChain's `deepagents-code` (`dcode`). The
+  deprecated `deepagent-code` package + console script still work as a back-compat
+  alias.
+
 ## 0.6.2 - 2026-07-02
 
 ### Fixed

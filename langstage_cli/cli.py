@@ -260,7 +260,7 @@ def print_goodbye():
 
 
 def get_agent_name(graph) -> str:
-    """Extract agent name from graph object, defaulting to 'AgentCode'."""
+    """Extract agent name from graph object, defaulting to 'Agent'."""
     # Try common attribute names for agent/graph name
     for attr in ("name", "agent_name", "_name", "__name__"):
         if hasattr(graph, attr):
@@ -272,7 +272,7 @@ def get_agent_name(graph) -> str:
         name = graph.builder.name
         if name and isinstance(name, str):
             return name
-    return "AgentCode"
+    return "Agent"
 
 
 def get_agent_description(graph) -> Optional[str]:
@@ -1238,7 +1238,7 @@ async def run_single_turn_agui(
 def run_conversation_loop(
     graph,
     config: Dict[str, Any],
-    agent_name: str = "AgentCode",
+    agent_name: str = "Agent",
     agent_description: Optional[str] = None,
     use_async: bool = False,
     use_agui: bool = False,
