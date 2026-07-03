@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langstage-cli"
-version = "0.6.5"
+version = "0.6.6"
 description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,7 +30,7 @@ dependencies = [
     # AG-UI runtime (ag-ui-langgraph[fastapi] + uvicorn, via core's [agui] extra)
     # is a HARD dep. A bare `pip install langstage-cli` must be able to run a turn.
     # >=1.0.6 for the shared preflight primitive core.verify() used by --verify.
-    "langstage-core[agui]>=1.0.6",
+    "langstage-core[agui]>=1.0.7",
     "click>=8.0.0",
     "python-dotenv",
 ]
@@ -54,7 +54,7 @@ dev = [
 ]
 # Redundant since AG-UI moved into base deps (core 1.0); kept as a no-op alias so
 # existing `pip install langstage-cli[agui]` scripts/READMEs still resolve.
-agui = ["langstage-core[agui]>=1.0.6"]
+agui = ["langstage-core[agui]>=1.0.7"]
 
 [project.scripts]
 langstage-cli = "langstage_cli.cli:main"
