@@ -167,7 +167,20 @@ Options:
   --demo                          Run with the built-in keyless demo agent
   --show-config                   Print the resolved configuration and exit
   -q, --quiet                     Scriptable single-shot output: only the reply
+  --verify                        Preflight the agent (one real turn); exit 0/1
   --version                       Show the version and exit
+```
+
+### Verifying an agent (CI gate)
+
+`--verify` loads the configured agent and runs **one real turn**, exiting `0` if it
+completed cleanly and non-zero otherwise — so you can gate on it in CI before
+trusting an agent. It catches a missing key, a broken tool, or a non-runnable graph
+that a static "it imports" check would wave through (it runs the same
+`langstage-core` preflight every LangStage surface uses):
+
+```bash
+langstage-cli --verify -a my_agent.py:graph || { echo "agent broken" >&2; exit 1; }
 ```
 
 ### Scriptable output

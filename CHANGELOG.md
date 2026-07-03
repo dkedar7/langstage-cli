@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.5 - 2026-07-03
+
+### Added
+- **`--verify`: preflight the configured agent with one real turn (ADR 0004).**
+  `langstage-cli --verify` (with `-a`/`--demo`/`LANGSTAGE_AGENT_SPEC`) loads the
+  agent, runs ONE real turn through the shared `langstage-core` primitive
+  `core.verify()`, and exits **0** if it completed cleanly, **non-zero** otherwise —
+  a real CI gate that catches a missing key / broken tool / bad graph *before* you
+  rely on it, versus a static "it imports" check. The verdict is a single line
+  (pass on stdout, failure on stderr), and a piped `--verify` auto-quiets (no
+  spinner or "Loaded" line), so `langstage-cli --verify -a my_agent.py` scripts
+  cleanly. First surface adoption of the consolidated preflight; "healthy" now
+  means the same thing here as in the other surfaces. Requires `langstage-core>=1.0.6`.
+
 ## 0.6.4 - 2026-07-03
 
 ### Added

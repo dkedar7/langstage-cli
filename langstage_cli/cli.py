@@ -1514,6 +1514,15 @@ def run_conversation_loop(
     "chatter, timing, and color, and emit only the agent's reply. Auto-enabled "
     "when a single-shot run is piped (stdout is not a TTY).",
 )
+@click.option(
+    "--verify",
+    "verify_agent",
+    is_flag=True,
+    default=False,
+    help="Preflight the configured agent: run ONE real turn and exit 0 if it "
+    "completed cleanly, non-zero otherwise. Catches a missing key / broken tool "
+    "/ bad graph before you rely on it (e.g. in CI).",
+)
 def main(
     message: Optional[str],
     agent_spec: Optional[str],
@@ -1527,6 +1536,7 @@ def main(
     agui: bool,
     show_config: bool,
     quiet: bool,
+    verify_agent: bool,
 ):
     """
     Run a LangGraph agent from the command line.
@@ -1561,6 +1571,7 @@ def main(
         langstage-cli -f ./prompt.md
         langstage-cli --demo "try it with no API key"
         langstage-cli --show-config
+        langstage-cli --verify -a my_agent.py   # preflight one real turn; exit 0/1
     """
     # Windows consoles default to cp1252, where the spinner (Braille frames) and
     # status glyphs (✓ ⏺ —) raise UnicodeEncodeError — the documented
@@ -1572,16 +1583,17 @@ def main(
         except (AttributeError, ValueError):  # non-reconfigurable stream
             pass
 
-    # Scriptable single-shot output (gh #53). A single-shot run (a MESSAGE arg or
-    # -f/--file) that is piped — stdout is not a TTY — auto-enables quiet so the
-    # consumer gets only the reply; --quiet forces it even in a terminal. Color is
-    # additionally stripped whenever stdout is not a TTY, matching well-behaved CLIs.
+    # Scriptable output (gh #53). A single-shot run (a MESSAGE arg or -f/--file) or
+    # a --verify preflight that is piped — stdout is not a TTY — auto-enables quiet
+    # so the consumer gets only the reply/verdict (no spinner or "Loaded" line);
+    # --quiet forces it in a terminal. Color is additionally stripped whenever stdout
+    # is not a TTY, matching well-behaved CLIs.
     try:
         _is_tty = sys.stdout.isatty()
     except (AttributeError, ValueError):
         _is_tty = False
     global _QUIET
-    _QUIET = quiet or (bool(message or prompt_file) and not _is_tty)
+    _QUIET = quiet or ((bool(message or prompt_file) or verify_agent) and not _is_tty)
     if _QUIET or not _is_tty:
         _disable_ansi()
 
@@ -1699,6 +1711,21 @@ def main(
         if loading:
             loading.stop()
             print(f"{GREEN}✓{RESET} {DIM}Loaded {final_spec}{RESET}")
+
+        # --verify: preflight the configured agent by running ONE real turn through
+        # the shared core primitive (langstage-core >= 1.0.6), then exit on its
+        # verdict. A green here means the agent actually completed a turn — not just
+        # that it imported — so `langstage-cli --verify -a my_agent.py` is a real CI
+        # gate. Delegates to core.verify so "healthy" means the same across surfaces.
+        if verify_agent:
+            from langstage_core.agui import verify as _core_verify
+
+            result = _core_verify(graph)
+            if result.ok:
+                print(f"{GREEN}✓{RESET} agent verified: {result.reason}")
+                sys.exit(0)
+            _status(f"{RED}✗ agent verification failed: {result.reason}{RESET}")
+            sys.exit(1)
 
         # Seed LangGraph RunnableConfig from TOML [configurable] table if present
         config_dict: Dict[str, Any] = {"configurable": {}}
