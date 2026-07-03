@@ -15,9 +15,23 @@ from langstage_cli import cli as _cli
 
 # The ANSI constants main() may blank via _disable_ansi().
 _ANSI_NAMES = (
-    "RESET", "BOLD", "DIM", "ITALIC", "UNDERLINE", "BLUE", "CYAN", "GREEN",
-    "YELLOW", "RED", "MAGENTA", "WHITE", "GRAY", "BRIGHT_CYAN", "BRIGHT_BLUE",
-    "BRIGHT_GREEN", "BRIGHT_YELLOW",
+    "RESET",
+    "BOLD",
+    "DIM",
+    "ITALIC",
+    "UNDERLINE",
+    "BLUE",
+    "CYAN",
+    "GREEN",
+    "YELLOW",
+    "RED",
+    "MAGENTA",
+    "WHITE",
+    "GRAY",
+    "BRIGHT_CYAN",
+    "BRIGHT_BLUE",
+    "BRIGHT_GREEN",
+    "BRIGHT_YELLOW",
 )
 
 

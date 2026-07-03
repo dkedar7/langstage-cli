@@ -75,6 +75,7 @@ def _status(msg: str) -> None:
     mode (so it never pollutes the piped answer), to stdout otherwise."""
     print(msg, file=sys.stderr if _QUIET else sys.stdout)
 
+
 # Inherited HostConfig keys the terminal CLI never reads: it starts no server
 # (host/port/debug are inert) and the header box uses the loaded graph's name,
 # not `title`. `--show-config` / `/config` omit these so the diagnostic only
