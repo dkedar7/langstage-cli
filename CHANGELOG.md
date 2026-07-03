@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.4 - 2026-07-03
+
+### Added
+- **Scriptable single-shot output (gh #53).** A single-shot run (a `MESSAGE` arg
+  or `-f/--file`) now emits **only the agent's reply** — no header box, welcome
+  text, "Loaded" line, spinner, tool-call chatter, timing, or ANSI color — as soon
+  as it's piped (stdout is not a TTY). A new `-q/--quiet` flag forces the same
+  clean output in a terminal. Errors and diagnostics are routed to **stderr** so
+  they never pollute the captured reply, and the existing non-zero exit on a failed
+  turn (gh #47) makes `answer=$(langstage-cli --demo "hi")` safe to script. Color is
+  additionally stripped whenever stdout is not a TTY, matching well-behaved CLIs.
+
 ## 0.6.3 - 2026-07-02
 
 ### Changed
