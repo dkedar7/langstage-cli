@@ -166,8 +166,23 @@ Options:
   -v, --verbose                   Verbose output
   --demo                          Run with the built-in keyless demo agent
   --show-config                   Print the resolved configuration and exit
+  -q, --quiet                     Scriptable single-shot output: only the reply
   --version                       Show the version and exit
 ```
+
+### Scriptable output
+
+A single-shot run (a `MESSAGE` argument or `-f/--file`) prints only the agent's
+reply — no header, spinner, tool chatter, timing, or color — as soon as its output
+is **piped** (stdout isn't a TTY). Errors and diagnostics go to stderr, and the
+process exits non-zero if the turn failed, so a run is safe to capture:
+
+```bash
+answer=$(langstage-cli --demo "say hi") || echo "run failed" >&2
+echo "$answer"        # -> (demo agent) You said: say hi
+```
+
+Pass `-q/--quiet` to force the same clean output in a terminal.
 
 ## Creating Your Own Agent
 

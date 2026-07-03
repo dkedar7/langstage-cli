@@ -48,6 +48,34 @@ MAGENTA, WHITE, GRAY = "\033[35m", "\033[37m", "\033[90m"
 BRIGHT_CYAN, BRIGHT_BLUE = "\033[96m", "\033[94m"
 BRIGHT_GREEN, BRIGHT_YELLOW = "\033[92m", "\033[93m"
 
+# Scriptable single-shot output (gh #53). When a single-shot run is piped (stdout
+# is not a TTY) or --quiet is passed, we suppress every decoration — the header
+# box, welcome text, "Loaded" line, spinner, tool-call chatter, and timing — and
+# strip ANSI, so the pipe/file receives ONLY the agent's reply. Toggled once in
+# main(); the render helpers below read it as a module global.
+_QUIET = False
+
+
+def _disable_ansi() -> None:
+    """Blank every ANSI constant so nothing colorized reaches a pipe or file.
+
+    The render helpers reference these as module globals at call time, so
+    reassigning them here strips color everywhere without threading a flag
+    through every ``print``. ``render_markdown`` then also drops its ``**``/`` ` ``
+    markers cleanly (empty wrappers), leaving plain text.
+    """
+    global RESET, BOLD, DIM, ITALIC, UNDERLINE, BLUE, CYAN, GREEN, YELLOW, RED
+    global MAGENTA, WHITE, GRAY, BRIGHT_CYAN, BRIGHT_BLUE, BRIGHT_GREEN, BRIGHT_YELLOW
+    RESET = BOLD = DIM = ITALIC = UNDERLINE = BLUE = CYAN = GREEN = YELLOW = RED = ""
+    MAGENTA = WHITE = GRAY = BRIGHT_CYAN = BRIGHT_BLUE = BRIGHT_GREEN = BRIGHT_YELLOW = ""
+
+
+def _status(msg: str) -> None:
+    """Emit a status/diagnostic line off the reply stream: to stderr in quiet
+    mode (so it never pollutes the piped answer), to stdout otherwise."""
+    print(msg, file=sys.stderr if _QUIET else sys.stdout)
+
+
 # Inherited HostConfig keys the terminal CLI never reads: it starts no server
 # (host/port/debug are inert) and the header box uses the loaded graph's name,
 # not `title`. `--show-config` / `/config` omit these so the diagnostic only
@@ -604,6 +632,12 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         if "chunk" in chunk:
             text = chunk["chunk"]
             node = chunk.get("node", "unknown")
+            if _QUIET:
+                # Scriptable path (gh #53): emit the raw reply text only — no cyan
+                # bullet, no [node] label, and no markdown re-rendering, so a pipe
+                # gets exactly what the model produced.
+                print(text, end="", flush=True)
+                return
             if verbose:
                 # Print the [node] label ONCE per streamed run — when a text run
                 # starts, or the node changes mid-stream — then append subsequent
@@ -635,6 +669,8 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
 
         # Handle tool calls - green tool name
         elif "tool_calls" in chunk:
+            if _QUIET:
+                return  # tool chatter is decoration; scriptable output omits it
             print_chunk._streaming_text = False  # a non-text event ends the text run
             for tool_call in chunk["tool_calls"]:
                 tool_name = tool_call["name"]
@@ -647,6 +683,8 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
 
         # Handle tool results - indented with result preview
         elif "tool_result" in chunk:
+            if _QUIET:
+                return  # tool chatter is decoration; scriptable output omits it
             print_chunk._streaming_text = False
             result = chunk.get("tool_result", "")
             preview = format_result_preview(str(result))
@@ -672,7 +710,11 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
     elif status == "error":
         print_chunk._streaming_text = False
         error_msg = chunk.get("error", "Unknown error")
-        print(f"\n{RED}✗ Error: {error_msg}{RESET}")
+        if _QUIET:
+            # Keep stdout clean for the pipe; errors go to stderr. (gh #53)
+            print(f"Error: {error_msg}", file=sys.stderr)
+        else:
+            print(f"\n{RED}✗ Error: {error_msg}{RESET}")
 
 
 # Whether the current AI turn has already emitted its leading cyan bullet. Tracked
@@ -1199,12 +1241,16 @@ async def run_single_turn_agui(
         has_interrupt = False
         num_pending_actions = 0
         first_chunk = True
-        spinner = Spinner("Thinking")
-        spinner.start()
+        # No spinner in quiet mode — its \r animation is terminal-only chrome that
+        # would corrupt a piped reply. (gh #53)
+        spinner = None if _QUIET else Spinner("Thinking")
+        if spinner:
+            spinner.start()
         try:
             async for chunk in agui_stream_updates(agent, message, thread_id, resume=resume):
                 if first_chunk:
-                    spinner.stop()
+                    if spinner:
+                        spinner.stop()
                     first_chunk = False
                 print_chunk(chunk, verbose=verbose)
                 if chunk.get("status") == "error":
@@ -1215,7 +1261,8 @@ async def run_single_turn_agui(
                     action_requests = interrupt_data.get("action_requests", [])
                     num_pending_actions = len(action_requests) if action_requests else 1
         finally:
-            spinner.stop()
+            if spinner:
+                spinner.stop()
 
         if has_interrupt and interactive:
             decisions = handle_interrupt_input(num_pending_actions)
@@ -1223,7 +1270,7 @@ async def run_single_turn_agui(
         elif has_interrupt:
             # --no-interactive: auto-approve and resume so the agent runs to
             # completion (same behavior as the default path, gh #32).
-            print(
+            _status(
                 f"{DIM}Auto-approving {num_pending_actions} pending action(s) "
                 f"(--no-interactive){RESET}"
             )
@@ -1257,11 +1304,14 @@ def run_conversation_loop(
     # Set up tab completion for slash commands
     setup_readline_completion()
 
-    # Print box-drawn header with agent name and description
-    print_header_box(agent_name, os.getcwd(), agent_description)
+    # Header + welcome are interactive chrome; a scriptable single-shot run omits
+    # them so the pipe gets only the reply. (gh #53)
+    if not _QUIET:
+        # Print box-drawn header with agent name and description
+        print_header_box(agent_name, os.getcwd(), agent_description)
 
-    # Print welcome message with tips
-    print_welcome()
+        # Print welcome message with tips
+        print_welcome()
 
     # Create command context (mutable dict that commands can modify)
     command_context = {
@@ -1285,20 +1335,26 @@ def run_conversation_loop(
     try:
         agui_agent = build_session_agent(graph, name=agent_name)
     except RuntimeError as e:
-        print(f"{RED}⏺ {e}{RESET}")
+        _status(f"{RED}⏺ {e}{RESET}")
         return
 
     # Process initial message if provided
     if initial_message:
-        print(f"\n{BOLD}{BRIGHT_BLUE}You{RESET}")
-        print(f"{initial_message}")
-        print()
+        if not _QUIET:
+            print(f"\n{BOLD}{BRIGHT_BLUE}You{RESET}")
+            print(f"{initial_message}")
+            print()
 
         duration, had_error = asyncio.run(
             run_single_turn_agui(agui_agent, initial_message, thread_id, interactive, verbose)
         )
-        print_timing(duration, verbose)
-        print()
+        if _QUIET:
+            # Only the reply reached stdout (streamed with end=""); cap it with a
+            # single newline so the piped output ends cleanly. No timing line. (gh #53)
+            print()
+        else:
+            print_timing(duration, verbose)
+            print()
 
         # Exit after single-shot execution. Propagate the turn's error status so
         # main() can exit non-zero — a single-shot/piped caller must be able to tell
@@ -1449,6 +1505,15 @@ def run_conversation_loop(
     default=False,
     help="Print the resolved configuration (defaults < langstage.toml < env < CLI) and exit",
 )
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Scriptable single-shot output: suppress the header, spinner, tool "
+    "chatter, timing, and color, and emit only the agent's reply. Auto-enabled "
+    "when a single-shot run is piped (stdout is not a TTY).",
+)
 def main(
     message: Optional[str],
     agent_spec: Optional[str],
@@ -1461,6 +1526,7 @@ def main(
     demo: bool,
     agui: bool,
     show_config: bool,
+    quiet: bool,
 ):
     """
     Run a LangGraph agent from the command line.
@@ -1506,9 +1572,22 @@ def main(
         except (AttributeError, ValueError):  # non-reconfigurable stream
             pass
 
+    # Scriptable single-shot output (gh #53). A single-shot run (a MESSAGE arg or
+    # -f/--file) that is piped — stdout is not a TTY — auto-enables quiet so the
+    # consumer gets only the reply; --quiet forces it even in a terminal. Color is
+    # additionally stripped whenever stdout is not a TTY, matching well-behaved CLIs.
+    try:
+        _is_tty = sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        _is_tty = False
+    global _QUIET
+    _QUIET = quiet or (bool(message or prompt_file) and not _is_tty)
+    if _QUIET or not _is_tty:
+        _disable_ansi()
+
     if demo:
         if agent_spec:
-            print(f"{RED}⏺ Error: --demo and -a/--agent are mutually exclusive{RESET}")
+            _status(f"{RED}⏺ Error: --demo and -a/--agent are mutually exclusive{RESET}")
             sys.exit(1)
         # The keyless echo agent shipped with the shared core.
         agent_spec = "langstage_core.demo.stub:graph"
@@ -1540,7 +1619,7 @@ def main(
     try:
         # Handle -f/--file option: read message from file
         if prompt_file and message:
-            print(f"{RED}⏺ Error: Cannot use both MESSAGE argument and -f/--file option{RESET}")
+            _status(f"{RED}⏺ Error: Cannot use both MESSAGE argument and -f/--file option{RESET}")
             sys.exit(1)
 
         if prompt_file:
@@ -1548,17 +1627,17 @@ def main(
                 with open(prompt_file, "r", encoding="utf-8") as f:
                     message = f.read().strip()
                 if not message:
-                    print(f"{RED}⏺ Error: File '{prompt_file}' is empty{RESET}")
+                    _status(f"{RED}⏺ Error: File '{prompt_file}' is empty{RESET}")
                     sys.exit(1)
             except Exception as e:
-                print(f"{RED}⏺ Error reading file '{prompt_file}': {e}{RESET}")
+                _status(f"{RED}⏺ Error reading file '{prompt_file}': {e}{RESET}")
                 sys.exit(1)
 
         # Load TOML configuration (global + project, merged)
         try:
             toml_config, toml_sources = config_module.load_config()
         except config_module.ConfigError as e:
-            print(f"{RED}⏺ {e}{RESET}")
+            _status(f"{RED}⏺ {e}{RESET}")
             sys.exit(1)
 
         # Resolve all standard settings through the shared chain in one shot:
@@ -1575,9 +1654,9 @@ def main(
         # else (e.g. LANGSTAGE_STREAM_MODE=values, which bypasses the flag's Choice)
         # with a clean error instead of a fatal crash deep in the stream worker.
         if final_stream_mode not in ("auto", "updates", "messages"):
-            print(
+            _status(
                 f"{RED}⏺ Error: unsupported stream mode {final_stream_mode!r} "
-                f"(use 'auto', 'updates', or 'messages'){RESET}"
+                f"(use 'auto', 'updates', or 'messages')"
             )
             sys.exit(2)
         use_async = cfg.async_mode
@@ -1593,11 +1672,11 @@ def main(
             if default_agent_path.exists():
                 final_spec = f"{default_agent_path}:agent"
             else:
-                print(f"{RED}⏺ Error: No agent specified.{RESET}")
-                print(f"\n{DIM}Usage:{RESET}")
-                print("  langstage-cli path/to/agent.py:graph")
-                print("  langstage-cli mypackage.module:agent")
-                print(f"\n{DIM}Or set the LANGSTAGE_AGENT_SPEC environment variable{RESET}")
+                _status(f"{RED}⏺ Error: No agent specified.{RESET}")
+                _status(f"\n{DIM}Usage:{RESET}")
+                _status("  langstage-cli path/to/agent.py:graph")
+                _status("  langstage-cli mypackage.module:agent")
+                _status(f"\n{DIM}Or set the LANGSTAGE_AGENT_SPEC environment variable{RESET}")
                 sys.exit(1)
 
         # Resolve a relative file-path spec against the invocation cwd BEFORE we
@@ -1611,12 +1690,15 @@ def main(
             if workspace_path.exists():
                 os.chdir(workspace_path)
 
-        # Load the graph with a spinner
-        spinner = Spinner("Loading agent")
-        spinner.start()
+        # Load the graph with a spinner (both are chrome; quiet mode stays silent
+        # until the reply). (gh #53)
+        loading = None if _QUIET else Spinner("Loading agent")
+        if loading:
+            loading.start()
         graph, final_graph_name = load_graph(final_spec, final_graph_name_default)
-        spinner.stop()
-        print(f"{GREEN}✓{RESET} {DIM}Loaded {final_spec}{RESET}")
+        if loading:
+            loading.stop()
+            print(f"{GREEN}✓{RESET} {DIM}Loaded {final_spec}{RESET}")
 
         # Seed LangGraph RunnableConfig from TOML [configurable] table if present
         config_dict: Dict[str, Any] = {"configurable": {}}
@@ -1654,21 +1736,21 @@ def main(
             sys.exit(1)
 
     except FileNotFoundError as e:
-        print(f"{RED}⏺ Error: {e}{RESET}")
+        _status(f"{RED}⏺ Error: {e}{RESET}")
         sys.exit(1)
     except AttributeError as e:
-        print(f"{RED}⏺ Error: {e}{RESET}")
+        _status(f"{RED}⏺ Error: {e}{RESET}")
         sys.exit(1)
     except ModuleNotFoundError as e:
-        print(f"{RED}⏺ Error: {e}{RESET}")
-        print(f"\n{DIM}Make sure your agent's dependencies are installed.{RESET}")
+        _status(f"{RED}⏺ Error: {e}{RESET}")
+        _status(f"\n{DIM}Make sure your agent's dependencies are installed.{RESET}")
         sys.exit(1)
     except Exception as e:
-        print(f"{RED}⏺ Error: {e}{RESET}")
+        _status(f"{RED}⏺ Error: {e}{RESET}")
         if verbose:
             import traceback
 
-            print(traceback.format_exc())
+            _status(traceback.format_exc())
         sys.exit(1)
 
 

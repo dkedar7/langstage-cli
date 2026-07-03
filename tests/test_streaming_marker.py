@@ -50,14 +50,18 @@ _TOK_AGENT = textwrap.dedent(
 )
 
 
-def test_token_stream_renders_one_marker_end_to_end(tmp_path, monkeypatch):
+def test_token_stream_scriptable_when_piped(tmp_path, monkeypatch):
+    # gh #53: a single-shot run under CliRunner (stdout is not a TTY) auto-enables
+    # quiet output, so the piped reply is ONLY the streamed tokens — no `⏺` marker,
+    # header box, "Loaded" line, or timing. (Per-turn marker dedup, gh #34, is still
+    # covered by test_marker_printed_once_per_text_run driving print_chunk directly.)
     (tmp_path / "tok.py").write_text(_TOK_AGENT)
     monkeypatch.chdir(tmp_path)
 
     r = CliRunner().invoke(main, ["-a", "tok.py:graph", "hi", "--no-interactive"])
     assert r.exit_code == 0, r.output
-    # Exactly one bullet for the whole streamed turn, not one per token.
-    assert r.output.count("⏺") == 1, r.output
+    assert r.output.count("⏺") == 0, r.output  # no decoration on the scriptable path
+    assert "Loaded" not in r.output and "You" not in r.output, r.output
     for word in ("alpha", "beta", "gamma"):
         assert word in r.output, r.output
 
