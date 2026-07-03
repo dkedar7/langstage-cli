@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.2 - 2026-07-02
+
+### Fixed
+- **A single-shot / `--no-interactive` run now exits non-zero when the agent errors
+  (gh #47).** A framed error (e.g. a `RunErrorEvent` like a recursion-limit failure)
+  was displayed but the turn still "completed", so the CLI exited 0 and a piped /
+  scripted caller couldn't tell a failed run from a success. `run_single_turn_agui`
+  now reports whether the turn errored and `main()` exits 1 on it. (A raised
+  exception already exited 1 via `main`'s handler; this covers the framed case.)
+- **Multi-node graphs no longer render as an unreadable run-on (gh #43).** Non-verbose
+  streaming printed one `⏺` marker per turn and appended every chunk, so two nodes'
+  messages ran together on one line. It now starts a fresh marker when the langgraph
+  node changes. Requires `langstage-core >= 1.0.4`, which carries the real node name
+  on each frame (it previously hardcoded `"agent"`).
+
 ## 0.6.1 - 2026-07-02
 
 ### Fixed
