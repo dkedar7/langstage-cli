@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.7 - 2026-07-04
+
+### Fixed
+- **The `langstage.toml` `[configurable]` table now reaches the graph (gh #57).**
+  `/config` and `--show-config` advertise that `[configurable]` seeds LangGraph's
+  `RunnableConfig.configurable`, but the AG-UI streaming path forwarded only
+  `thread_id` — every other key (model name, feature flags, API config, …) was
+  silently dropped, so a node's `config["configurable"]` saw `None`. The session
+  agent is now built with the resolved configurable (`build_session_agent(config=…)`
+  → `build_agent(config=…)`), so those keys reach the graph on every turn.
+
 ## 0.6.6 - 2026-07-03
 
 ### Changed

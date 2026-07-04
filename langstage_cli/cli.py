@@ -1328,12 +1328,21 @@ def run_conversation_loop(
     # the core bridge) so multi-turn memory persists. Since langstage-core 1.0 the
     # AG-UI adapter is the only streaming path.
     thread_id = ""
+    configurable: Dict[str, Any] = {}
     if isinstance(config, dict):
-        thread_id = config.get("configurable", {}).get("thread_id", "") or ""
+        configurable = dict(config.get("configurable", {}))
+        thread_id = configurable.get("thread_id", "") or ""
     from langstage_cli.agui_stream import build_session_agent
 
+    # Forward the resolved `[configurable]` table (minus thread_id, which the
+    # adapter sets per-run) to the graph, so keys beyond thread_id — the documented
+    # way to parameterize an agent — actually reach it instead of being silently
+    # dropped while /config advertises them. (gh #57)
+    configurable.pop("thread_id", None)
+    session_config = {"configurable": configurable} if configurable else None
+
     try:
-        agui_agent = build_session_agent(graph, name=agent_name)
+        agui_agent = build_session_agent(graph, name=agent_name, config=session_config)
     except RuntimeError as e:
         _status(f"{RED}⏺ {e}{RESET}")
         return
