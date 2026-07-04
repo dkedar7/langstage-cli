@@ -30,13 +30,18 @@ def ensure_agui_available() -> None:
         raise RuntimeError(_IMPORT_HINT) from e
 
 
-def build_session_agent(graph: Any, *, name: str = "langstage-cli") -> Any:
+def build_session_agent(graph: Any, *, name: str = "langstage-cli", config: Any = None) -> Any:
     """Wrap a compiled graph once per session (checkpointer attached by the core
-    bridge), so multi-turn memory persists across turns."""
+    bridge), so multi-turn memory persists across turns.
+
+    ``config`` (a ``RunnableConfig``, e.g. ``{"configurable": {...}}`` seeded from
+    ``langstage.toml``'s ``[configurable]`` table) is forwarded to the graph on
+    every turn, so keys beyond ``thread_id`` actually reach the agent. (gh #57)
+    """
     ensure_agui_available()
     from langstage_core.agui import build_agent
 
-    return build_agent(graph, name=name)
+    return build_agent(graph, name=name, config=config)
 
 
 async def agui_stream_updates(
