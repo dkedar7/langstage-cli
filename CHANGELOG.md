@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.8 - 2026-07-05
+
+### Fixed
+- **The interactive prompt no longer leaks an ANSI color escape in `--quiet` / piped
+  mode (gh #60).** `make_prompt`'s `color` argument defaulted to the `BRIGHT_BLUE`
+  module global, bound once at function-definition time — so `_disable_ansi()`
+  (which rebinds the color globals to empty strings for non-TTY / `--quiet` output)
+  never reached it, and the prompt still emitted a stray `\033[94m`. The default is
+  now resolved at call time, so a disabled-ANSI prompt is clean. (Thanks @JSap0914.)
+
 ## 0.6.7 - 2026-07-04
 
 ### Fixed
