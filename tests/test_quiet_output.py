@@ -36,6 +36,14 @@ def test_quiet_flag_forces_clean_output(tmp_path, monkeypatch):
     assert "\x1b[" not in r.output and "⏺" not in r.output, r.output
 
 
+def test_make_prompt_uses_disabled_color_globals_after_ansi_is_disabled():
+    c._disable_ansi()
+
+    prompt = c.make_prompt()
+
+    assert "\x1b[" not in prompt, repr(prompt)
+
+
 def test_errors_go_to_stderr_not_stdout(tmp_path, monkeypatch):
     # A failed single-shot run must keep stdout clean so a scripted caller can
     # consume the (empty) reply and read the diagnostic off stderr / the exit code.
