@@ -173,12 +173,13 @@ def rl_wrap(code: str) -> str:
     return code
 
 
-def make_prompt(text: str = "❯", color: str = BRIGHT_BLUE) -> str:
+def make_prompt(text: str = "❯", color: str | None = None) -> str:
     """Create a prompt string with proper readline escaping for ANSI codes.
 
     This prevents line wrapping issues on Windows and other terminals.
     """
-    return f"{rl_wrap(BOLD)}{rl_wrap(color)}{text}{rl_wrap(RESET)} "
+    prompt_color = BRIGHT_BLUE if color is None else color
+    return f"{rl_wrap(BOLD)}{rl_wrap(prompt_color)}{text}{rl_wrap(RESET)} "
 
 
 def register_command(
