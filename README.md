@@ -4,7 +4,9 @@
 
 > Renamed from **deepagent-code** (the old package name now just installs this one, and the `deepagent-code` command still works). Not to be confused with LangChain's **`deepagents-code`** (`dcode`) — that's a separate project; `langstage-cli` is the terminal stage of the [LangStage family](#every-stage-for-your-langgraph-agent).
 
-![langstage-cli](examples/image.png)
+<p align="center">
+  <img src="assets/header.svg" alt="langstage-cli — the terminal stage for your LangGraph agent" width="100%" />
+</p>
 
 ## Every stage for your LangGraph agent
 
