@@ -76,11 +76,12 @@ def _status(msg: str) -> None:
     print(msg, file=sys.stderr if _QUIET else sys.stdout)
 
 
-# Inherited HostConfig keys the terminal CLI never reads: it starts no server
-# (host/port/debug are inert) and the header box uses the loaded graph's name,
-# not `title`. `--show-config` / `/config` omit these so the diagnostic only
-# advertises knobs this surface actually honors. (gh #36)
-_INERT_KEYS = ["host", "port", "debug", "title"]
+# Keys the terminal CLI never honors, so `--show-config` / `/config` omit them and
+# the diagnostic only advertises knobs that actually do something. The inherited
+# HostConfig server keys — it starts no server (host/port/debug are inert) and the
+# header box uses the loaded graph's name, not `title` (gh #36) — plus `stream_mode`,
+# which has had no effect since the AG-UI streaming migration (gh #62).
+_INERT_KEYS = ["host", "port", "debug", "title", "stream_mode"]
 
 # Spinner frames for thinking animation
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -865,20 +866,6 @@ def handle_interrupt_input(num_actions: int = 1) -> List[Dict[str, Any]]:
         sys.exit(0)
 
 
-def _resolve_stream_mode(stream_mode: str):
-    """Map the user-facing stream mode to what LangGraph actually streams.
-
-    'auto' = dual-channel ``["updates", "messages"]``: the parser renders LLM
-    tokens live when the agent streams them, and falls back to the finished
-    message content otherwise — so a node that returns a complete (non-token-
-    streamed) ``AIMessage`` still renders instead of an empty turn. (Bare
-    'messages' only carries LLM token streams, which is exactly why it was a
-    silent-blank trap — gh #-dogfood.) 'updates'/'messages' pass through as the
-    explicit single-mode power-user choices.
-    """
-    return ["updates", "messages"] if stream_mode == "auto" else stream_mode
-
-
 def print_help():
     """Print formatted help information."""
     print(f"\n{BOLD}{BRIGHT_CYAN}Commands{RESET}")
@@ -980,14 +967,12 @@ def cmd_status(args: str, context: Dict[str, Any]) -> Optional[str]:
     agent_name = context.get("agent_name", "Unknown")
     verbose = context.get("verbose", False)
     use_async = context.get("use_async", False)
-    stream_mode = context.get("stream_mode", "updates")
 
     print(f"\n{BOLD}{BRIGHT_CYAN}Session Status{RESET}")
     print(f"{DIM}{'─' * 30}{RESET}")
     print(f"  {DIM}Agent:{RESET}       {agent_name}")
     print(f"  {DIM}Thread ID:{RESET}   {thread_id[:8]}...")
     print(f"  {DIM}Mode:{RESET}        {'async' if use_async else 'sync'}")
-    print(f"  {DIM}Stream:{RESET}      {stream_mode}")
     print(f"  {DIM}Verbose:{RESET}     {'on' if verbose else 'off'}")
     print(f"  {DIM}CWD:{RESET}         {os.getcwd()}")
     print()
@@ -1483,9 +1468,11 @@ def run_conversation_loop(
 @click.option(
     "--stream-mode",
     type=click.Choice(["auto", "updates", "messages"]),
-    help="Stream mode: 'auto' (default; token streaming when the agent emits "
-    "tokens, full-message fallback otherwise), 'updates' (whole-message), or "
-    "'messages' (token-level only — a finished AIMessage renders nothing here).",
+    # DEPRECATED (gh #62): a no-op since the AG-UI streaming migration — all three
+    # modes render identically. Kept hidden + accepted so existing `--stream-mode X`
+    # invocations don't hard-error; a one-line notice fires when it is passed.
+    hidden=True,
+    help="(deprecated: no effect since the AG-UI streaming migration).",
 )
 @click.option(
     "--verbose",
@@ -1566,7 +1553,6 @@ def main(
     \b
     - LANGSTAGE_AGENT_SPEC: Agent location (same formats as above).
     - LANGSTAGE_WORKSPACE_ROOT: Working directory for the agent
-    - LANGSTAGE_STREAM_MODE: Stream mode for LangGraph (auto, updates, or messages)
 
     Reads ~/.langstage/config.toml (global) and langstage.toml (project,
     walks up from cwd). Precedence: CLI args > env vars > project TOML >
@@ -1629,6 +1615,14 @@ def main(
         "verbose": True if verbose else None,
     }
 
+    # --stream-mode is deprecated and inert since the AG-UI streaming migration
+    # (gh #62): accepted so scripts don't break, but say so once when it's passed.
+    if stream_mode is not None:
+        _status(
+            f"{DIM}⏺ Note: --stream-mode is deprecated and has no effect "
+            f"(streaming is uniform since the AG-UI migration).{RESET}"
+        )
+
     if show_config:
         # See _INERT_KEYS: hide the server/web keys this surface ignores. (gh #36)
         print(
@@ -1671,16 +1665,10 @@ def main(
         )
         final_spec = cfg.agent_spec
         final_graph_name_default = cfg.graph_name
+        # stream_mode is deprecated and inert (gh #62) — it only ever comes from the
+        # accepted-and-ignored flag now (env/TOML no longer resolve it), so there is
+        # nothing to validate; it changes no rendering.
         final_stream_mode = cfg.stream_mode
-        # The CLI's render path only supports 'updates' / 'messages'. Reject anything
-        # else (e.g. LANGSTAGE_STREAM_MODE=values, which bypasses the flag's Choice)
-        # with a clean error instead of a fatal crash deep in the stream worker.
-        if final_stream_mode not in ("auto", "updates", "messages"):
-            _status(
-                f"{RED}⏺ Error: unsupported stream mode {final_stream_mode!r} "
-                f"(use 'auto', 'updates', or 'messages')"
-            )
-            sys.exit(2)
         use_async = cfg.async_mode
         verbose = cfg.verbose
         # Whether a workspace root was explicitly configured (vs the default cwd);

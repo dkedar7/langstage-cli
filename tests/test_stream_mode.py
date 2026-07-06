@@ -1,15 +1,14 @@
-"""--stream-mode validation + the 'auto' default (gh #-dogfood).
+"""--stream-mode is deprecated and inert (gh #62).
 
-`values` was advertised but unsupported by the CLI's render path; passing it
-crashed with a fatal interpreter-shutdown error (a ValueError surfaced while the
-spinner daemon thread held stdout). Now: the flag is a Choice {auto,updates,
-messages}, and the resolved value (incl. LANGSTAGE_STREAM_MODE, which bypasses
-the flag) is validated up front with a clean error.
+`--stream-mode {auto,updates,messages}` (and `LANGSTAGE_STREAM_MODE` / `[ui]
+stream_mode`) was advertised as three streaming behaviors, but since the AG-UI
+streaming migration all three render identically — the setting has no effect. The
+dead knob is now: hidden from `--help`, omitted from `--show-config`, no longer
+resolved from env / TOML, and accepted-and-ignored on the CLI (so existing
+`--stream-mode X` invocations don't hard-error) with a one-line deprecation notice.
 
-Separately, single 'messages' mode only carries LLM *token* streams, so a node
-that returns a finished (non-token-streamed) AIMessage rendered an empty turn.
-The default is now 'auto' (dual updates+messages) so that agent shape — the one
-the README's own "Creating Your Own Agent" example produces — still renders.
+The unrelated "a finished AIMessage still renders" behavior (the reason the old
+default was 'auto') is intrinsic to the AG-UI path now and is kept as a regression.
 """
 
 import textwrap
@@ -18,8 +17,7 @@ from click.testing import CliRunner
 
 from langstage_cli.cli import main
 
-# A graph whose node returns a *finished* AIMessage (no token streaming) — the
-# shape that was a silent blank turn under bare 'messages'.
+# A graph whose node returns a *finished* AIMessage (no token streaming).
 FINISHED_AIMESSAGE_AGENT = textwrap.dedent(
     """
     from langchain_core.messages import AIMessage
@@ -37,8 +35,8 @@ FINISHED_AIMESSAGE_AGENT = textwrap.dedent(
 )
 
 
-def test_default_auto_renders_finished_aimessage(tmp_path, monkeypatch):
-    """Regression: the default mode must render a finished AIMessage's content."""
+def test_finished_aimessage_still_renders(tmp_path, monkeypatch):
+    """Regression: a finished (non-token-streamed) AIMessage's content must render."""
     (tmp_path / "fin_agent.py").write_text(FINISHED_AIMESSAGE_AGENT)
     monkeypatch.chdir(tmp_path)
     r = CliRunner().invoke(main, ["-a", "fin_agent.py:graph", "--no-interactive", "ping"])
@@ -46,31 +44,28 @@ def test_default_auto_renders_finished_aimessage(tmp_path, monkeypatch):
     assert "FINISHED_MARKER_42" in r.output
 
 
-def test_default_stream_mode_is_auto():
+def test_stream_mode_is_omitted_from_show_config():
+    # gh #62: the deprecated no-op knob is no longer advertised in --show-config.
     r = CliRunner().invoke(main, ["--show-config"])
     assert r.exit_code == 0, r.output
-    assert "auto" in r.output
+    assert "stream_mode" not in r.output
 
 
-def test_stream_mode_values_flag_rejected_cleanly():
-    r = CliRunner().invoke(main, ["--demo", "--no-interactive", "--stream-mode", "values", "hi"])
-    assert r.exit_code != 0
-    assert "values" in r.output
-    assert "Fatal" not in r.output  # no interpreter-shutdown crash
-
-
-def test_stream_mode_messages_flag_accepted():
-    # A valid mode must still be accepted by the Choice (parses, doesn't error on the flag).
-    r = CliRunner().invoke(main, ["--stream-mode", "messages", "--show-config"])
+def test_stream_mode_flag_is_accepted_and_ignored_with_a_notice():
+    # An existing `--stream-mode X` invocation must not hard-error; it is accepted,
+    # ignored, and prints a one-line deprecation notice.
+    r = CliRunner().invoke(main, ["--demo", "--no-interactive", "--stream-mode", "messages", "hi"])
     assert r.exit_code == 0, r.output
-    assert "messages" in r.output
+    assert "deprecated" in r.output.lower()
 
 
-def test_stream_mode_values_via_env_rejected():
+def test_stream_mode_env_is_ignored_not_rejected():
+    # LANGSTAGE_STREAM_MODE used to be validated (and an unsupported value exited 2).
+    # It is now simply ignored — a run proceeds normally regardless of its value.
     r = CliRunner().invoke(
         main,
         ["--demo", "--no-interactive", "hi"],
         env={"LANGSTAGE_STREAM_MODE": "values"},
     )
-    assert r.exit_code == 2, r.output
-    assert "unsupported stream mode" in r.output.lower()
+    assert r.exit_code == 0, r.output
+    assert "unsupported stream mode" not in r.output.lower()
