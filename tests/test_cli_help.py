@@ -21,7 +21,9 @@ def test_help_leads_with_canonical_names():
     # canonical LANGSTAGE_* / langstage.toml are present...
     assert "LANGSTAGE_AGENT_SPEC" in out
     assert "LANGSTAGE_WORKSPACE_ROOT" in out
-    assert "LANGSTAGE_STREAM_MODE" in out
     assert "langstage.toml" in out
+    # ...and the deprecated, no-op stream-mode knob is no longer advertised (gh #62)
+    assert "LANGSTAGE_STREAM_MODE" not in out
+    assert "--stream-mode" not in out
     # ...and the legacy names are no longer presented as the only config vocab
     assert "DEEPAGENT_AGENT_SPEC" not in out

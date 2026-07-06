@@ -28,24 +28,26 @@ def test_defaults(isolated, tmp_path):
     assert cfg.agent_spec is None
 
 
-def test_env_stream_mode(isolated, tmp_path):
-    cfg = CodeConfig.resolve(env={"DEEPAGENT_STREAM_MODE": "values"}, toml_start=tmp_path)
-    assert cfg.stream_mode == "values"
-    assert cfg.sources["stream_mode"] == "env:DEEPAGENT_STREAM_MODE"
+def test_stream_mode_env_and_toml_are_deprecated_and_ignored(isolated, tmp_path):
+    # gh #62: stream_mode has no effect since the AG-UI migration, so it is no longer
+    # resolved from LANGSTAGE_STREAM_MODE / [ui] stream_mode — both are now ignored and
+    # the field stays at its default.
+    _toml(tmp_path, '[ui]\nstream_mode = "messages"\n')
+    cfg = CodeConfig.resolve(env={"LANGSTAGE_STREAM_MODE": "updates"}, toml_start=tmp_path)
+    assert cfg.stream_mode == "auto"  # default, neither env nor TOML applied
+    assert cfg.sources["stream_mode"] == "default"
 
 
 def test_toml_keys(isolated, tmp_path):
     _toml(
         tmp_path,
-        '[agent]\nspec = "a.py:g"\ngraph_name = "myg"\n'
-        '[ui]\nverbose = true\nasync_mode = true\nstream_mode = "values"\n',
+        '[agent]\nspec = "a.py:g"\ngraph_name = "myg"\n[ui]\nverbose = true\nasync_mode = true\n',
     )
     cfg = CodeConfig.resolve(env={}, toml_start=tmp_path)
     assert cfg.agent_spec == "a.py:g"
     assert cfg.graph_name == "myg"
     assert cfg.verbose is True
     assert cfg.async_mode is True
-    assert cfg.stream_mode == "values"
 
 
 def test_deepagent_spec_alias_is_deprecated(isolated, tmp_path):
@@ -75,5 +77,6 @@ def test_overrides_win(isolated, tmp_path):
 def test_describe_lists_var_names(isolated, tmp_path):
     text = CodeConfig.resolve(env={}, toml_start=tmp_path).describe()
     assert "DEEPAGENT_AGENT_SPEC" in text
-    assert "DEEPAGENT_STREAM_MODE" in text
-    assert "stream_mode" in text
+    # A field with a live TOML key is listed with its key (stream_mode's env/TOML
+    # were removed as a deprecated no-op — gh #62 — so it's no longer var-backed).
+    assert "graph_name" in text

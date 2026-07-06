@@ -84,16 +84,18 @@ class CodeConfig(HostConfig):
     resolver); the even-older ``DEEPAGENT_SPEC`` alias is reconciled below.
     """
 
+    # stream_mode is retained as an inert field (default only) so existing code and
+    # `--stream-mode` overrides don't break, but it is DEPRECATED: it has no effect
+    # since the AG-UI streaming migration (all three modes render identically). It is
+    # no longer resolved from LANGSTAGE_STREAM_MODE / [ui] stream_mode, and is omitted
+    # from `--show-config`. (gh #62)
     stream_mode: str = "auto"
     graph_name: str = "graph"
     verbose: bool = False
     async_mode: bool = False
 
-    _ENV: ClassVar[dict] = {
-        "stream_mode": ("LANGSTAGE_STREAM_MODE", str),
-    }
+    _ENV: ClassVar[dict] = {}
     _TOML: ClassVar[dict] = {
-        "stream_mode": "ui.stream_mode",
         "graph_name": "agent.graph_name",
         "verbose": "ui.verbose",
         "async_mode": "ui.async_mode",

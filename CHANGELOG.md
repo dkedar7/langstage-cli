@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.9 - 2026-07-06
+
+### Changed
+- **`--stream-mode` is deprecated — it was a no-op advertised as a feature (gh #62).**
+  `--stream-mode {auto,updates,messages}`, `LANGSTAGE_STREAM_MODE`, and `[ui] stream_mode`
+  claimed three streaming behaviors, but since the AG-UI streaming migration all three
+  render identically — the setting had zero effect (the `_resolve_stream_mode` mapper was
+  never called). Rather than keep advertising a dead knob, it is now: hidden from `--help`,
+  omitted from `--show-config`, no longer resolved from the env var / TOML key, and
+  accepted-and-ignored on the CLI (so an existing `--stream-mode X` invocation doesn't
+  hard-error) with a one-line deprecation notice. No rendering behavior changes.
+
 ## 0.6.8 - 2026-07-05
 
 ### Fixed

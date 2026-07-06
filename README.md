@@ -111,9 +111,6 @@ langstage-cli
 
 # Working directory
 export LANGSTAGE_WORKSPACE_ROOT="/path/to/workspace"
-
-# Stream mode (updates or messages)
-export LANGSTAGE_STREAM_MODE="updates"
 ```
 
 ## Configuration Files
@@ -142,7 +139,6 @@ root = "."
 [ui]
 verbose = true
 async_mode = false
-stream_mode = "auto"   # auto | updates | messages
 
 [configurable]
 # seeds LangGraph RunnableConfig.configurable
@@ -163,8 +159,6 @@ Options:
   -f, --file PATH                 Read message from a file (any extension)
   --interactive/--no-interactive  Handle interrupts (default: interactive)
   --async-mode/--sync-mode        Async streaming (default: sync)
-  --stream-mode [auto|updates|messages]
-                                  Stream mode (default: auto)
   -v, --verbose                   Verbose output
   --demo                          Run with the built-in keyless demo agent
   --show-config                   Print the resolved configuration and exit

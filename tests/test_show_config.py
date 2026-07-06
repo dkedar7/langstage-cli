@@ -14,13 +14,10 @@ from langstage_cli.cli import main
 
 def test_show_config_reflects_cli_flags():
     with CliRunner().isolated_filesystem():  # no stray toml
-        r = CliRunner().invoke(
-            main, ["-a", "fromcli.py:graph", "-v", "--stream-mode", "messages", "--show-config"]
-        )
+        r = CliRunner().invoke(main, ["-a", "fromcli.py:graph", "-v", "--show-config"])
     assert r.exit_code == 0, r.output
     # CLI-set values appear with the [override] source, not [default].
     assert re.search(r"agent_spec\s*=\s*fromcli\.py:graph\s*\[override\]", r.output), r.output
-    assert re.search(r"stream_mode\s*=\s*messages\s*\[override\]", r.output), r.output
     assert re.search(r"verbose\s*=\s*True\s*\[override\]", r.output), r.output
 
 
@@ -49,15 +46,15 @@ def test_show_config_without_flags_still_reports_env():
 
 def test_show_config_omits_server_only_keys():
     """The terminal CLI starts no server and titles the header from the graph
-    name, so host/port/debug/title are inert and must not be advertised. (gh #36)"""
+    name, so host/port/debug/title are inert and must not be advertised (gh #36).
+    stream_mode is likewise omitted — it's a deprecated no-op (gh #62)."""
     with CliRunner().isolated_filesystem():
         r = CliRunner().invoke(main, ["--show-config"])
     assert r.exit_code == 0, r.output
-    for key in ("host", "port", "debug", "title"):
+    for key in ("host", "port", "debug", "title", "stream_mode"):
         assert not re.search(rf"^\s*{key}\s*=", r.output, re.MULTILINE), f"{key} should be omitted"
     # ...but keys the CLI actually honors are still shown.
     assert re.search(r"^\s*agent_spec\s*=", r.output, re.MULTILINE), r.output
-    assert re.search(r"^\s*stream_mode\s*=", r.output, re.MULTILINE), r.output
 
 
 def test_show_config_title_env_not_advertised_as_effective():
