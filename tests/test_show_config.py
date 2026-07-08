@@ -44,6 +44,20 @@ def test_show_config_without_flags_still_reports_env():
     assert re.search(r"agent_spec\s*=\s*fromenv\.py:graph\s*\[env:", r.output), r.output
 
 
+def test_show_config_includes_the_configurable_table(tmp_path, monkeypatch):
+    # gh #66: the [configurable] table is honored (reaches the graph) and shown by
+    # interactive /config, but --show-config omitted it — the two views disagreed.
+    (tmp_path / "langstage.toml").write_text(
+        '[agent]\nspec = "agent.py:graph"\n[configurable]\nmodel_name = "gpt-4o-mini"\ntemperature = "0.2"\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(main, ["--show-config"])
+    assert r.exit_code == 0, r.output
+    assert "LangGraph configurable:" in r.output
+    assert "model_name: gpt-4o-mini" in r.output
+    assert "temperature: 0.2" in r.output
+
+
 def test_show_config_omits_server_only_keys():
     """The terminal CLI starts no server and titles the header from the graph
     name, so host/port/debug/title are inert and must not be advertised (gh #36).

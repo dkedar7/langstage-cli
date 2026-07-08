@@ -979,6 +979,20 @@ def cmd_status(args: str, context: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _print_configurable(configurable: dict) -> None:
+    """Render the LangGraph ``[configurable]`` table. Shared by ``/config`` and
+    ``--show-config`` so the two "show the resolved config" views format it identically
+    and neither omits a section the other shows (gh #66)."""
+    if not configurable:
+        return
+    print(f"  {DIM}LangGraph configurable:{RESET}")
+    for k, v in configurable.items():
+        v_str = str(v)
+        if len(v_str) > 50:
+            v_str = v_str[:50] + "..."
+        print(f"    {CYAN}{k}:{RESET} {v_str}")
+
+
 @register_command(
     name="config",
     description="Show or set configuration",
@@ -1015,14 +1029,7 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
         for line in report.splitlines():
             print(f"  {line}")
 
-        configurable = config.get("configurable", {})
-        if configurable:
-            print(f"  {DIM}LangGraph configurable:{RESET}")
-            for k, v in configurable.items():
-                v_str = str(v)
-                if len(v_str) > 50:
-                    v_str = v_str[:50] + "..."
-                print(f"    {CYAN}{k}:{RESET} {v_str}")
+        _print_configurable(config.get("configurable", {}))
         print()
     else:
         parts = args.split(maxsplit=1)
@@ -1633,6 +1640,12 @@ def main(
                 toml_start=Path.cwd(), overrides=cli_overrides
             ).describe(omit_keys=_INERT_KEYS)
         )
+        # Also show the [configurable] table — it IS honored (reaches the graph's
+        # config["configurable"], gh #57) and /config displays it, so --show-config must
+        # too, or the two "resolved config" views disagree (gh #66).
+        _toml, _ = config_module.load_config()
+        configurable = config_module.get(_toml, "configurable")
+        _print_configurable(configurable if isinstance(configurable, dict) else {})
         return
 
     try:
