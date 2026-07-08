@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.11 - 2026-07-08
+
+### Fixed
+- **`--show-config` now shows the `[configurable]` table, matching interactive `/config`
+  (gh #66).** The `[configurable]` TOML table is honored at runtime (it reaches the graph's
+  `config["configurable"]`, gh #57) and `/config` displays it, but `--show-config` omitted
+  the section entirely — so a user parameterizing their agent via `[configurable]` (model
+  name, temperature, feature flags) and running `--show-config` to confirm it took effect
+  saw nothing. Both views now render the table through a shared helper, so they stay in sync.
+
 ## 0.6.10 - 2026-07-07
 
 ### Fixed
