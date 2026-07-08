@@ -979,20 +979,6 @@ def cmd_status(args: str, context: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _print_configurable(configurable: dict) -> None:
-    """Render the LangGraph ``[configurable]`` table. Shared by ``/config`` and
-    ``--show-config`` so the two "show the resolved config" views format it identically
-    and neither omits a section the other shows (gh #66)."""
-    if not configurable:
-        return
-    print(f"  {DIM}LangGraph configurable:{RESET}")
-    for k, v in configurable.items():
-        v_str = str(v)
-        if len(v_str) > 50:
-            v_str = v_str[:50] + "..."
-        print(f"    {CYAN}{k}:{RESET} {v_str}")
-
-
 @register_command(
     name="config",
     description="Show or set configuration",
@@ -1015,21 +1001,21 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
         else:
             print(f"  {DIM}TOML sources:{RESET} {DIM}(none — using defaults){RESET}")
 
-        # Full resolved view: each value, where it came from, and the env var
-        # / TOML key that sets it. Prefer the snapshot captured at startup (before
-        # apply_workspace self-published LANGSTAGE_WORKSPACE_ROOT), so workspace_root's
-        # source is reported truthfully and /config agrees with --show-config (gh #64).
+        # Full resolved view — the COMPLETE describe() diagnostic (fields + source +
+        # env/TOML keys + the [configurable] table). Prefer the snapshot captured at
+        # startup (before apply_workspace self-published LANGSTAGE_WORKSPACE_ROOT), so
+        # workspace_root's source is truthful and /config renders byte-for-byte what
+        # --show-config prints — both go through the one describe() (gh #64, #66).
         # Fall back to a fresh resolve only if the snapshot is somehow absent.
         report = config.get("_resolved_config_report")
         if report is None:
             from langstage_cli.config import CodeConfig
 
-            # Omit the inherited server/web keys the terminal CLI never honors (gh #36).
-            report = CodeConfig.resolve().describe(omit_keys=_INERT_KEYS)
+            report = CodeConfig.resolve().describe(
+                omit_keys=_INERT_KEYS, configurable=config.get("configurable") or None
+            )
         for line in report.splitlines():
             print(f"  {line}")
-
-        _print_configurable(config.get("configurable", {}))
         print()
     else:
         parts = args.split(maxsplit=1)
@@ -1634,18 +1620,19 @@ def main(
         )
 
     if show_config:
-        # See _INERT_KEYS: hide the server/web keys this surface ignores. (gh #36)
+        # The COMPLETE diagnostic — fields (server/web keys this surface ignores omitted,
+        # gh #36) + the honored [configurable] table (gh #57/#66) — comes from the one
+        # describe() renderer, so --show-config and /config can't disagree by construction.
+        _toml, _ = config_module.load_config()
+        _configurable = config_module.get(_toml, "configurable")
         print(
             config_module.CodeConfig.resolve(
                 toml_start=Path.cwd(), overrides=cli_overrides
-            ).describe(omit_keys=_INERT_KEYS)
+            ).describe(
+                omit_keys=_INERT_KEYS,
+                configurable=_configurable if isinstance(_configurable, dict) else None,
+            )
         )
-        # Also show the [configurable] table — it IS honored (reaches the graph's
-        # config["configurable"], gh #57) and /config displays it, so --show-config must
-        # too, or the two "resolved config" views disagree (gh #66).
-        _toml, _ = config_module.load_config()
-        configurable = config_module.get(_toml, "configurable")
-        _print_configurable(configurable if isinstance(configurable, dict) else {})
         return
 
     try:
@@ -1685,7 +1672,11 @@ def main(
         # published var, and misreport workspace_root's source as [env:...] — diverging
         # from --show-config (which runs before apply_workspace). Reuse this snapshot so
         # /config shows the true provenance. (gh #64)
-        resolved_config_report = cfg.describe(omit_keys=_INERT_KEYS)
+        _snap_configurable = config_module.get(toml_config, "configurable")
+        resolved_config_report = cfg.describe(
+            omit_keys=_INERT_KEYS,
+            configurable=_snap_configurable if isinstance(_snap_configurable, dict) else None,
+        )
         final_spec = cfg.agent_spec
         final_graph_name_default = cfg.graph_name
         # stream_mode is deprecated and inert (gh #62) — it only ever comes from the

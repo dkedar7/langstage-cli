@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.6.11 - 2026-07-08
+## 0.6.12 - 2026-07-08
+
+### Changed
+- **`--show-config` and interactive `/config` now render the identical diagnostic, and a
+  parity test locks it (config-diagnostic consolidation).** Both views were assembled from
+  pieces (`describe()` + a separately-rendered `[configurable]` table) that could drift —
+  the seam behind #64 and #66. Both now go through the single `describe(configurable=…)`
+  renderer in **langstage-core 1.0.14** (now the minimum pin); the per-surface
+  `_print_configurable` bolt-on is gone, and a test asserts the two views can't diverge.
 
 ### Fixed
 - **`--show-config` now shows the `[configurable]` table, matching interactive `/config`
