@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.10 - 2026-07-07
+
+### Fixed
+- **The interactive `/config` command now reports the true source of `workspace_root`,
+  matching `--show-config` (gh #64).** `/config` re-resolved the config at display time —
+  but by then startup had already called `apply_workspace()`, which self-publishes
+  `LANGSTAGE_WORKSPACE_ROOT` into the process environment (ADR 0005). So `/config` saw the
+  tool's own published var and reported `workspace_root`'s source as
+  `[env:LANGSTAGE_WORKSPACE_ROOT]` (and swapped the value for an absolute path) even when the
+  user never set it — the exact opposite of the provenance the command exists to show.
+  `/config` now reuses the config diagnostic snapshotted at startup (before the self-publish),
+  so it agrees with `--show-config`.
+
 ## 0.6.9 - 2026-07-06
 
 ### Changed
