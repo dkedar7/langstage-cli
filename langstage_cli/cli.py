@@ -1002,14 +1002,17 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
             print(f"  {DIM}TOML sources:{RESET} {DIM}(none — using defaults){RESET}")
 
         # Full resolved view: each value, where it came from, and the env var
-        # / TOML key that sets it.
-        from langstage_cli.config import CodeConfig
+        # / TOML key that sets it. Prefer the snapshot captured at startup (before
+        # apply_workspace self-published LANGSTAGE_WORKSPACE_ROOT), so workspace_root's
+        # source is reported truthfully and /config agrees with --show-config (gh #64).
+        # Fall back to a fresh resolve only if the snapshot is somehow absent.
+        report = config.get("_resolved_config_report")
+        if report is None:
+            from langstage_cli.config import CodeConfig
 
-        # Omit the inherited server/web keys the terminal CLI never honors: it
-        # starts no server (host/port/debug inert) and the header uses the graph
-        # name, not `title`. Advertising them with source attribution is the
-        # "advertised != honored" trap. (gh #36)
-        for line in CodeConfig.resolve().describe(omit_keys=_INERT_KEYS).splitlines():
+            # Omit the inherited server/web keys the terminal CLI never honors (gh #36).
+            report = CodeConfig.resolve().describe(omit_keys=_INERT_KEYS)
+        for line in report.splitlines():
             print(f"  {line}")
 
         configurable = config.get("configurable", {})
@@ -1663,6 +1666,13 @@ def main(
             toml_start=Path.cwd(),
             overrides=cli_overrides,
         )
+        # Snapshot the resolved-config diagnostic NOW, before apply_workspace() below
+        # self-publishes LANGSTAGE_WORKSPACE_ROOT into os.environ (ADR 0005). The
+        # interactive /config used to re-resolve at display time, see the tool's own
+        # published var, and misreport workspace_root's source as [env:...] — diverging
+        # from --show-config (which runs before apply_workspace). Reuse this snapshot so
+        # /config shows the true provenance. (gh #64)
+        resolved_config_report = cfg.describe(omit_keys=_INERT_KEYS)
         final_spec = cfg.agent_spec
         final_graph_name_default = cfg.graph_name
         # stream_mode is deprecated and inert (gh #62) — it only ever comes from the
@@ -1735,6 +1745,9 @@ def main(
 
         # Expose TOML sources to slash commands via the config dict
         config_dict["_toml_sources"] = [str(p) for p in toml_sources]
+        # The resolved-config diagnostic snapshotted before apply_workspace, so /config
+        # reports the true source of workspace_root instead of the self-published env (gh #64).
+        config_dict["_resolved_config_report"] = resolved_config_report
 
         # Extract agent name and description from graph object
         agent_name = get_agent_name(graph)
