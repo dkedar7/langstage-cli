@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.14 - 2026-07-10
+
+### Fixed
+- **The header box collapsed to a bare `╭╮`/`╰╯` under a pty that reports 0 columns (gh
+  #71).** `get_terminal_width()` guarded `OSError` but not the case where
+  `os.get_terminal_size()` succeeds and reports `columns == 0` — which a pty forked without
+  an initialized window size (pexpect/expect automation, some CI pseudo-ttys, editor
+  terminals, process supervisors) really does. `min(0, 100) == 0` made the box borders
+  (`"─" * (width - 2)`) vanish while content rows overflowed. Width is now floored at 40
+  (`min(max(cols, 40), 100)`), so the banner always renders.
+
 ## 0.6.13 - 2026-07-09
 
 ### Fixed

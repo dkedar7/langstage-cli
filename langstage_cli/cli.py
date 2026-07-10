@@ -250,11 +250,18 @@ class Spinner:
 
 
 def get_terminal_width() -> int:
-    """Get terminal width, capped at 100 for readability."""
+    """Get terminal width, floored at a sane minimum and capped at 100 for readability.
+
+    A pty forked without an initialized window size (pexpect/expect automation, some CI
+    pseudo-ttys, editor terminals, process supervisors) reports ``columns == 0`` WITHOUT
+    raising ``OSError`` — so the old `min(cols, 100)` returned 0, and the header box's
+    borders (`"─" * (width - 2)`) collapsed to `╭╮`/`╰╯` while content rows overflowed
+    (gh #71). Floor at 40 so the banner always renders."""
     try:
-        return min(os.get_terminal_size().columns, 100)
+        cols = os.get_terminal_size().columns
     except OSError:
-        return 80
+        cols = 80
+    return min(max(cols, 40), 100)
 
 
 def separator(style: str = "light") -> str:
