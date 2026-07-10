@@ -83,7 +83,9 @@ def test_print_chunk_interrupt_shows_the_tool_name():
         print_chunk(
             {
                 "status": "interrupt",
-                "interrupt": {"action_requests": [{"action": "write_file", "args": {"path": "notes.md"}}]},
+                "interrupt": {
+                    "action_requests": [{"action": "write_file", "args": {"path": "notes.md"}}]
+                },
             }
         )
     out = buf.getvalue()
