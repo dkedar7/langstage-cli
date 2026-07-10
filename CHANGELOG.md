@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.13 - 2026-07-09
+
+### Fixed
+- **The HITL approval prompt always showed `1. unknown` instead of the tool name (gh #69).**
+  The interrupt renderer read `action.get("tool")`, but a HumanInterrupt `action_request`
+  keys the tool name under `action` (the deepagents/langchain convention), so the lookup
+  always missed. That's safety-relevant — the operator couldn't see what they were about to
+  approve. Now reads `action.get("action")`, falling back to `"tool"` (for agents on the
+  older key) then `"unknown"`. Mirrors the langstage-vscode #44 fix.
+
 ## 0.6.12 - 2026-07-08
 
 ### Changed

@@ -700,7 +700,11 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         print(f"\n{YELLOW}⚠ Action Required{RESET}")
         if action_requests:
             for i, action in enumerate(action_requests):
-                tool = action.get("tool", "unknown")
+                # The HumanInterrupt action_request keys the tool name under "action"
+                # (deepagents/langchain convention); a bare `.get("tool")` always missed
+                # and rendered "unknown" (gh #69). Fall back to "tool" for any agent that
+                # uses the older key, then to "unknown". Mirrors the vscode #44 fix.
+                tool = action.get("action") or action.get("tool") or "unknown"
                 args_preview = get_tool_arg_preview(action.get("args", {}))
                 print(f"  {DIM}{i + 1}. {tool}{RESET}")
                 if args_preview:
