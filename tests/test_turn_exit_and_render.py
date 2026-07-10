@@ -70,3 +70,41 @@ def test_print_chunk_same_node_stays_on_one_marker():
         print_chunk({"status": "streaming", "chunk": "lo", "node": "agent"})
     out = buf.getvalue()
     assert out.count("⏺") == 1
+
+
+def test_print_chunk_interrupt_shows_the_tool_name():
+    # gh #69: the HITL approval prompt read `action.get("tool")`, but the HumanInterrupt
+    # action_request keys the tool name under "action" (deepagents/langchain convention),
+    # so every prompt rendered "1. unknown" — a safety-relevant blind spot (the operator
+    # can't see what they're approving). Render must surface the real tool name.
+    print_chunk._streaming_text = False
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_chunk(
+            {
+                "status": "interrupt",
+                "interrupt": {
+                    "action_requests": [{"action": "write_file", "args": {"path": "notes.md"}}]
+                },
+            }
+        )
+    out = buf.getvalue()
+    assert "write_file" in out
+    assert "unknown" not in out
+
+
+def test_print_chunk_interrupt_falls_back_to_legacy_tool_key():
+    # Robustness: an agent that still emits the older "tool" key must not regress to
+    # "unknown" (the fix reads "action" first, then "tool", then "unknown").
+    print_chunk._streaming_text = False
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_chunk(
+            {
+                "status": "interrupt",
+                "interrupt": {"action_requests": [{"tool": "legacy_tool", "args": {}}]},
+            }
+        )
+    out = buf.getvalue()
+    assert "legacy_tool" in out
+    assert "unknown" not in out
