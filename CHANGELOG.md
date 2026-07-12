@@ -15,6 +15,17 @@
   pytest suppression all match every other legacy-env notice) and marks the synthesized
   `DEEPAGENT_AGENT_SPEC` already-warned so the resolver stays silent about it. The notice now
   names the var the user actually set.
+- **Scriptable/quiet output concatenated a turn's separate messages with no separator (gh
+  #74).** The gh #43 node-change break — re-emitting the marker and inserting a newline when
+  the streaming node changes mid-turn — landed in the verbose and non-verbose branches of
+  `print_chunk()` but never covered the `_QUIET` / scriptable branch, so two `AIMessage`s from
+  two nodes in one turn (a common ReAct / plan→execute shape) were emitted back-to-back
+  (`…up.The capital…`) on the one output mode explicitly meant to be machine-parseable. The
+  quiet branch now tracks `_streaming_node` too and emits a bare `\n` (no marker, no color)
+  on a mid-turn node change; single-message token streaming still joins unbroken. Also, a
+  `BrokenPipeError` from an early-closing consumer (`| head`, `| grep -m1`) on the scriptable
+  path is now swallowed (the standard Python SIGPIPE recipe) and exits cleanly, instead of
+  surfacing a `⏺`-decorated error line to stderr.
 
 ## 0.6.14 - 2026-07-10
 
