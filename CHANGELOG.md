@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.15 - 2026-07-12
+
+### Fixed
+- **Setting the documented `DEEPAGENT_SPEC` alias emitted a deprecation notice naming
+  `DEEPAGENT_AGENT_SPEC` — a variable the user never set (gh #73).** `CodeConfig.resolve()`
+  reconciles the oldest alias by copying `DEEPAGENT_SPEC` onto `DEEPAGENT_AGENT_SPEC` before
+  delegating to the shared resolver, so the resolver then emitted its **visible stderr
+  `note:`** for the synthesized `DEEPAGENT_AGENT_SPEC` — pointing the user at a var absent
+  from their environment and defeating the whole point of the nudge. The one correct signal
+  (`DEEPAGENT_SPEC`) was only a `DeprecationWarning`, which the default filter swallows. The
+  CLI now raises the deprecation through the shared resolver's own `_warn_legacy_env` helper
+  for `DEEPAGENT_SPEC` (so the message, dedupe, `LANGSTAGE_SUPPRESS_LEGACY_NOTICE` opt-out and
+  pytest suppression all match every other legacy-env notice) and marks the synthesized
+  `DEEPAGENT_AGENT_SPEC` already-warned so the resolver stays silent about it. The notice now
+  names the var the user actually set.
+
 ## 0.6.14 - 2026-07-10
 
 ### Fixed

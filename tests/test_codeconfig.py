@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from langstage_core.host import config as core_config
 from langstage_cli.config import CodeConfig
 
 
@@ -12,6 +13,12 @@ def isolated(tmp_path, monkeypatch):
     empty = tmp_path / "empty"
     empty.mkdir()
     monkeypatch.setenv("DEEPAGENTS_CONFIG_HOME", str(empty))
+    # The shared resolver dedupes each legacy-env notice once per process via a
+    # module-level set; clear the spec-alias entries so warning-asserting tests are
+    # order-independent (a prior resolve() in the same session would otherwise have
+    # already "warned" and silenced the DeprecationWarning these tests check).
+    for var in ("DEEPAGENT_SPEC", "DEEPAGENT_AGENT_SPEC"):
+        core_config._warned_legacy_env.discard(var)
     return tmp_path
 
 
@@ -54,6 +61,27 @@ def test_deepagent_spec_alias_is_deprecated(isolated, tmp_path):
     with pytest.warns(DeprecationWarning):
         cfg = CodeConfig.resolve(env={"DEEPAGENT_SPEC": "legacy.py:g"}, toml_start=tmp_path)
     assert cfg.agent_spec == "legacy.py:g"
+
+
+def test_deepagent_spec_alias_notice_names_the_var_the_user_set(isolated, tmp_path):
+    # gh #73: setting DEEPAGENT_SPEC must produce a deprecation notice that names
+    # DEEPAGENT_SPEC — the var actually in the user's environment — not
+    # DEEPAGENT_AGENT_SPEC, which the CLI only synthesizes internally to keep the
+    # shared resolver's precedence chain intact. Before the fix the CLI copied the
+    # value onto DEEPAGENT_AGENT_SPEC and the resolver then emitted the (visible)
+    # notice for THAT name, pointing the user at a variable they never set.
+    #
+    # The stderr note derives from the same _warn_legacy_env(legacy=...) call as the
+    # DeprecationWarning (and is pytest-suppressed), so asserting on the warning's
+    # name is a faithful proxy for the name the user-visible note carries.
+    with pytest.warns(DeprecationWarning) as records:
+        cfg = CodeConfig.resolve(env={"DEEPAGENT_SPEC": "legacy.py:g"}, toml_start=tmp_path)
+
+    assert cfg.agent_spec == "legacy.py:g"
+    messages = [str(w.message) for w in records]
+    assert any(m.startswith("DEEPAGENT_SPEC is deprecated") for m in messages), messages
+    # The bug: a second warning named DEEPAGENT_AGENT_SPEC, a var the user never set.
+    assert not any(m.startswith("DEEPAGENT_AGENT_SPEC is deprecated") for m in messages), messages
 
 
 def test_canonical_var_beats_alias(isolated, tmp_path):
