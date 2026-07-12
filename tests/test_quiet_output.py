@@ -85,3 +85,55 @@ def test_interactive_default_keeps_decoration(capsys):
     print_chunk._streaming_node = None
     print_chunk({"status": "streaming", "chunk": "hi", "node": "n"})
     assert "⏺" in capsys.readouterr().out
+
+
+def test_print_chunk_quiet_breaks_between_nodes(capsys):
+    # gh #74: two AIMessages produced by different nodes in one turn (a ReAct /
+    # plan→execute shape) must not run together on the scriptable path. The gh #43
+    # node-change break covered the verbose/non-verbose branches but not _QUIET, so
+    # the two messages were emitted back-to-back (`…up.The capital…`) with no
+    # separator — on the one output mode meant to be machine-parseable. A bare
+    # newline (no marker, no color) now separates them.
+    c._QUIET = True
+    print_chunk._streaming_text = False
+    print_chunk._streaming_node = None
+    print_chunk({"status": "streaming", "chunk": "Let me look that up.", "node": "think"})
+    print_chunk(
+        {"status": "streaming", "chunk": "The capital of France is Paris.", "node": "answer"}
+    )
+    out = capsys.readouterr().out
+    assert out == "Let me look that up.\nThe capital of France is Paris.", repr(out)
+    # No decoration leaks onto the scriptable stream — only the boundary newline.
+    assert "⏺" not in out and "\x1b[" not in out, repr(out)
+
+
+def test_print_chunk_quiet_single_node_tokens_join_unbroken(capsys):
+    # Contrast (gh #74): tokens of ONE message share a node, so they must still join
+    # with no separator — that's correct token streaming; only the cross-node
+    # boundary is a break.
+    c._QUIET = True
+    print_chunk._streaming_text = False
+    print_chunk._streaming_node = None
+    for tok in ["Hel", "lo ", "world"]:
+        print_chunk({"status": "streaming", "chunk": tok, "node": "answer"})
+    out = capsys.readouterr().out
+    assert out == "Hello world", repr(out)
+
+
+def test_broken_pipe_is_swallowed_not_surfaced(tmp_path, monkeypatch):
+    # gh #74 (secondary): an early-closing consumer (`| head`, `| grep -m1`) closes
+    # the pipe mid-write, raising BrokenPipeError. That is idiomatic scriptable usage,
+    # not a failure — it must be swallowed (Python's usual SIGPIPE handling) and exit
+    # cleanly, never surfaced as a ⏺-decorated error line (the glyph quiet mode
+    # otherwise suppresses).
+    monkeypatch.chdir(tmp_path)
+
+    def _raise_broken_pipe(*args, **kwargs):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr(c, "run_conversation_loop", _raise_broken_pipe)
+    r = CliRunner().invoke(main, ["--demo", "hi"])
+    assert r.exit_code == 0, r.output
+    assert "Broken pipe" not in r.output, r.output
+    assert "⏺" not in r.output, r.output
+    assert "Error" not in r.output, r.output

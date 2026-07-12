@@ -644,8 +644,19 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             if _QUIET:
                 # Scriptable path (gh #53): emit the raw reply text only — no cyan
                 # bullet, no [node] label, and no markdown re-rendering, so a pipe
-                # gets exactly what the model produced.
+                # gets exactly what the model produced. But when the streaming node
+                # changes mid-turn, insert a bare newline (no marker/color) so two
+                # nodes' messages don't run together (…up.The capital…). The gh #43
+                # node-change break landed in the verbose/non-verbose branches but not
+                # here, so the scriptable path — the one output mode meant to be
+                # machine-parseable — was the only one that dropped the boundary
+                # (gh #74). Tokens of a single message share one node, so they still
+                # join unbroken.
+                if print_chunk._streaming_text and print_chunk._streaming_node != node:
+                    print()  # node changed mid-turn — break so the messages don't concatenate
                 print(text, end="", flush=True)
+                print_chunk._streaming_node = node
+                print_chunk._streaming_text = True
                 return
             if verbose:
                 # Print the [node] label ONCE per streamed run — when a text run
@@ -1788,6 +1799,21 @@ def main(
         if turn_had_error:
             sys.exit(1)
 
+    except BrokenPipeError:
+        # An early-closing consumer on the scriptable path (`| head`, `| grep -m1`, …)
+        # closes the pipe while we're still writing, raising BrokenPipeError. That is
+        # idiomatic, expected usage — not an error — so swallow it and exit quietly
+        # instead of surfacing the ⏺-decorated error line the generic handler below
+        # would (which also leaks the ⏺ glyph quiet mode otherwise suppresses).
+        # Redirect the remaining stdout to devnull so the interpreter's shutdown flush
+        # doesn't raise a second BrokenPipeError — the standard Python SIGPIPE recipe.
+        # (gh #74)
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except (OSError, ValueError):  # no real fd (e.g. under test capture) — nothing to redirect
+            pass
+        sys.exit(0)
     except FileNotFoundError as e:
         _status(f"{RED}⏺ Error: {e}{RESET}")
         sys.exit(1)

@@ -11,12 +11,12 @@ lookups.
 """
 
 import os
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, List, Optional, Tuple
 
 from langstage_core.host import HostConfig, load_toml_config
+from langstage_core.host.config import _warn_legacy_env, _warned_legacy_env
 
 
 class ConfigError(Exception):
@@ -113,9 +113,16 @@ class CodeConfig(HostConfig):
             and env.get("DEEPAGENT_SPEC")
         ):
             env["DEEPAGENT_AGENT_SPEC"] = env["DEEPAGENT_SPEC"]
-            warnings.warn(
-                "DEEPAGENT_SPEC is deprecated; use LANGSTAGE_AGENT_SPEC.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+            # Emit the deprecation signal for the var the user ACTUALLY set —
+            # DEEPAGENT_SPEC — through the shared resolver's own helper, so the
+            # DeprecationWarning, the visible stderr note, the once-per-var dedupe, the
+            # LANGSTAGE_SUPPRESS_LEGACY_NOTICE opt-out, and the pytest-note suppression
+            # all match every other legacy-env notice (gh #73).
+            _warn_legacy_env("DEEPAGENT_SPEC", "LANGSTAGE_AGENT_SPEC")
+            # The copy above populated DEEPAGENT_AGENT_SPEC only to keep the shared
+            # resolver's precedence chain intact; the user never set that var. Mark it
+            # already-warned so the resolver stays silent about it — otherwise the one
+            # signal a real user actually sees (the stderr note) would name a variable
+            # absent from their environment, defeating the deprecation nudge (gh #73).
+            _warned_legacy_env.add("DEEPAGENT_AGENT_SPEC")
         return super().resolve(env=env, **kwargs)
