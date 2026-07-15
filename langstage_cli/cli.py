@@ -1160,18 +1160,26 @@ def cmd_reset(args: str, context: Dict[str, Any]) -> Optional[str]:
     usage="/verbose [on|off]",
 )
 def cmd_verbose(args: str, context: Dict[str, Any]) -> Optional[str]:
-    """Toggle or show verbose output mode."""
+    """Toggle or set verbose output mode.
+
+    Bare ``/verbose`` flips the current value — honouring the advertised "Toggle
+    verbose output mode" contract (gh #79) — while ``/verbose on|off`` sets it
+    explicitly. Either way the new state is reported.
+    """
     verbose = context.get("verbose", False)
     if args:
         if args.lower() in ("on", "true", "1"):
-            context["verbose"] = True
-            print(f"{GREEN}✓ Verbose mode enabled{RESET}")
+            verbose = True
         elif args.lower() in ("off", "false", "0"):
-            context["verbose"] = False
-            print(f"{GREEN}✓ Verbose mode disabled{RESET}")
+            verbose = False
+        else:
+            print(f"{YELLOW}Usage: /verbose [on|off]{RESET}")
+            return None
     else:
-        print(f"{DIM}Verbose mode: {'on' if verbose else 'off'}{RESET}")
-        print(f"{DIM}Use /verbose on or /verbose off to change{RESET}")
+        # Bare /verbose toggles, matching the "Toggle" description (gh #79).
+        verbose = not verbose
+    context["verbose"] = verbose
+    print(f"{GREEN}✓ Verbose mode {'enabled' if verbose else 'disabled'}{RESET}")
     return None
 
 
