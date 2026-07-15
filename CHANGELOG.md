@@ -3,6 +3,16 @@
 ## 0.6.16 - 2026-07-14
 
 ### Fixed
+- **Quiet/scriptable mode leaked the `⚠ Action Required` HITL banner onto stdout (gh #77).**
+  The interrupt branch of `print_chunk()` never got the `_QUIET` gate its sibling
+  tool-call/tool-result branches have, so when an agent raised an `interrupt()` on the
+  documented `--no-interactive` auto-approve + piped/quiet path, the `⚠ Action Required`
+  banner, a leading blank line, and the pending-action list were printed to **stdout** — ahead
+  of the real reply — corrupting the machine-readable output that a scripting consumer captures
+  (and the run still exited `0`, so nothing signalled the corruption). Unlike #76 (stderr only),
+  this landed on the very stream a script reads. The interrupt branch now returns early in quiet
+  mode, so stdout carries only the agent's reply; the `Auto-approving …` diagnostic still goes to
+  stderr, so a log/human still sees what was approved.
 - **Quiet/scriptable error output still leaked the `⏺` glyph on every error path except
   `BrokenPipeError` (gh #76).** Errors already route to stderr with color stripped, but the
   `⏺` in `_status(f"{RED}⏺ Error: {e}{RESET}")` is a literal glyph, not an ANSI code, so

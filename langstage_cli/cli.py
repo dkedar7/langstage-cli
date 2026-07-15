@@ -723,6 +723,15 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
 
     elif status == "interrupt":
         print_chunk._streaming_text = False
+        if _QUIET:
+            # The `⚠ Action Required` banner is human-facing decoration — like the
+            # tool-call / tool-result chatter above, the scriptable path omits it so
+            # the machine-readable reply on stdout carries ONLY the agent's text and
+            # is never corrupted by the banner (a leading blank line, the literal `⚠`
+            # glyph, and the pending-action list). Under --no-interactive the
+            # `Auto-approving …` diagnostic still goes to stderr, so a log/human still
+            # sees what was approved. (gh #77)
+            return
         interrupt_data = chunk.get("interrupt", {})
         action_requests = interrupt_data.get("action_requests", [])
 
