@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.17 - 2026-07-15
+
+### Fixed
+- **Bare `/verbose` never toggled despite being advertised as "Toggle verbose output mode"
+  (gh #79).** The interactive `/verbose` command is registered — and shown in `/help` — as
+  "Toggle verbose output mode", but the shipped bare form (`/verbose` with no argument) only
+  *printed* the current state and told the user to run `/verbose on|off`; it flipped nothing.
+  A one-word command named "Toggle" that no-ops is the same "advertised != honoured" class as
+  #62/#66/#36, on the interactive command surface. `cmd_verbose` now flips the value on a bare
+  call and reports the new state (`✓ Verbose mode enabled`/`disabled`), matching the `/help`
+  description and the one-word command name. The explicit `/verbose on|off` (and the `true/1`,
+  `false/0` synonyms) form is unchanged — it still *sets* the value rather than toggling — and
+  an unrecognised argument now prints `Usage: /verbose [on|off]` instead of silently emitting a
+  misleading confirmation.
+
 ## 0.6.16 - 2026-07-14
 
 ### Fixed
