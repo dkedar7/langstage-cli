@@ -13,7 +13,7 @@ piped path these tests care about.
 from click.testing import CliRunner
 
 from langstage_cli import cli as c
-from langstage_cli.cli import main, print_chunk
+from langstage_cli.cli import main, print_chunk, _status
 
 
 def test_piped_single_shot_is_only_the_reply(tmp_path, monkeypatch):
@@ -118,6 +118,114 @@ def test_print_chunk_quiet_single_node_tokens_join_unbroken(capsys):
         print_chunk({"status": "streaming", "chunk": tok, "node": "answer"})
     out = capsys.readouterr().out
     assert out == "Hello world", repr(out)
+
+
+_HITL_AGENT = """
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import MessagesState
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt
+from langchain_core.messages import AIMessage
+
+def ask(state):
+    decision = interrupt({"action": "delete_file", "path": "/etc/passwd"})
+    return {"messages": [AIMessage(content=f"Decision was: {decision}")]}
+
+g = StateGraph(MessagesState)
+g.add_node("ask", ask)
+g.add_edge(START, "ask")
+g.add_edge("ask", END)
+graph = g.compile(checkpointer=MemorySaver())
+"""
+
+
+def test_print_chunk_quiet_suppresses_hitl_banner(capsys):
+    # gh #77: the `⚠ Action Required` HITL banner is human decoration. On the
+    # scriptable path it must not reach stdout — it would corrupt the machine-readable
+    # reply (a leading blank line, the literal `⚠` glyph, and the action list, ahead
+    # of the real text). Like tool chatter, the interrupt branch is fully omitted in
+    # quiet mode; nothing leaks to stderr either (the banner is suppressed, not rerouted).
+    c._QUIET = True
+    print_chunk._streaming_text = False
+    print_chunk._streaming_node = None
+    print_chunk(
+        {
+            "status": "interrupt",
+            "interrupt": {
+                "action_requests": [{"action": "delete_file", "args": {"path": "/etc/passwd"}}]
+            },
+        }
+    )
+    captured = capsys.readouterr()
+    assert captured.out == "", repr(captured.out)  # reply stream stays clean
+    assert "⚠" not in captured.out and "Action Required" not in captured.out
+    assert captured.err == "", repr(captured.err)
+
+
+def test_print_chunk_interactive_keeps_hitl_banner(capsys):
+    # Contrast: the default (non-quiet) path still renders the banner and the pending
+    # action so an operator can see what they are approving (the gh #69 tool name).
+    c._QUIET = False
+    print_chunk._streaming_text = False
+    print_chunk(
+        {
+            "status": "interrupt",
+            "interrupt": {"action_requests": [{"action": "delete_file", "args": {}}]},
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Action Required" in out, repr(out)
+    assert "delete_file" in out, repr(out)
+
+
+def test_hitl_quiet_stdout_is_only_the_reply(tmp_path, monkeypatch):
+    # gh #77 end-to-end: a HITL agent run with --no-interactive on the scriptable path
+    # (single-shot + piped => quiet). stdout must be ONLY the agent's reply — no banner,
+    # no `⚠`, no leading blank line — while the auto-approve diagnostic stays on stderr.
+    (tmp_path / "hitl_agent.py").write_text(_HITL_AGENT)
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(main, ["-a", "hitl_agent.py:graph", "go", "--no-interactive"])
+    assert r.exit_code == 0, r.output
+    assert r.stdout == "Decision was: {'decisions': [{'type': 'approve'}]}\n", repr(r.stdout)
+    assert "⚠" not in r.stdout and "Action Required" not in r.stdout, repr(r.stdout)
+    # The auto-approve diagnostic is off the reply stream, on stderr.
+    assert "Auto-approving" in r.stderr, repr(r.stderr)
+
+
+def test_status_strips_error_glyph_in_quiet(capsys):
+    # gh #76: the `⏺` in `_status(f"{RED}⏺ Error: …{RESET}")` is a literal glyph, not
+    # ANSI, so _disable_ansi() (which blanks RED/RESET) leaves it. Quiet mode routes
+    # the line to stderr AND must drop the glyph, matching print_chunk's bare
+    # `Error: …` quiet contract. Emulate a real quiet run: ansi disabled + _QUIET set.
+    c._disable_ansi()
+    c._QUIET = True
+    _status(f"{c.RED}⏺ Error: Agent file not found: /no/such/agent.py{c.RESET}")
+    captured = capsys.readouterr()
+    assert captured.out == "", repr(captured.out)  # reply stream stays clean
+    assert captured.err == "Error: Agent file not found: /no/such/agent.py\n", repr(captured.err)
+    assert "⏺" not in captured.err, repr(captured.err)
+
+
+def test_status_keeps_glyph_and_uses_stdout_when_not_quiet(capsys):
+    # The interactive (non-quiet) path is unchanged: the glyph stays and the line
+    # goes to stdout, so the terminal keeps its familiar decoration.
+    c._QUIET = False
+    _status("⏺ Error: boom")
+    captured = capsys.readouterr()
+    assert captured.out == "⏺ Error: boom\n", repr(captured.out)
+    assert captured.err == "", repr(captured.err)
+
+
+def test_error_stderr_has_no_glyph_in_quiet(tmp_path, monkeypatch):
+    # gh #76 end-to-end: a load error on the scriptable path routes to stderr (stdout
+    # stays clean) but must not carry the `⏺` glyph — the #74 suppression only covered
+    # BrokenPipeError, so every other error path still leaked it via _status().
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(main, ["-a", "no_such_module_xyz:graph", "hi"])
+    assert r.exit_code == 1
+    assert r.stdout.strip() == "", r.stdout  # nothing on the reply stream
+    assert "Error" in r.stderr, r.stderr
+    assert "⏺" not in r.stderr, repr(r.stderr)
 
 
 def test_broken_pipe_is_swallowed_not_surfaced(tmp_path, monkeypatch):

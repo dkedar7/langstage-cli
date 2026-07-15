@@ -72,7 +72,18 @@ def _disable_ansi() -> None:
 
 def _status(msg: str) -> None:
     """Emit a status/diagnostic line off the reply stream: to stderr in quiet
-    mode (so it never pollutes the piped answer), to stdout otherwise."""
+    mode (so it never pollutes the piped answer), to stdout otherwise.
+
+    In quiet/scriptable mode also drop a leading ``⏺ `` marker. The glyph is a
+    literal in the caller's f-string (``f"{RED}⏺ Error: …{RESET}"``), not an ANSI
+    code, so ``_disable_ansi()`` — which blanks the surrounding color — leaves it
+    in place. Quiet mode is documented to suppress it, and the #74 fix only routed
+    around it for ``BrokenPipeError``; stripping it here, in one place, completes
+    that suppression so every error/diagnostic path matches the bare ``Error: …``
+    that ``print_chunk`` already emits on its own quiet error branch. (gh #76)
+    """
+    if _QUIET:
+        msg = msg.removeprefix("⏺ ")
     print(msg, file=sys.stderr if _QUIET else sys.stdout)
 
 
@@ -712,6 +723,15 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
 
     elif status == "interrupt":
         print_chunk._streaming_text = False
+        if _QUIET:
+            # The `⚠ Action Required` banner is human-facing decoration — like the
+            # tool-call / tool-result chatter above, the scriptable path omits it so
+            # the machine-readable reply on stdout carries ONLY the agent's text and
+            # is never corrupted by the banner (a leading blank line, the literal `⚠`
+            # glyph, and the pending-action list). Under --no-interactive the
+            # `Auto-approving …` diagnostic still goes to stderr, so a log/human still
+            # sees what was approved. (gh #77)
+            return
         interrupt_data = chunk.get("interrupt", {})
         action_requests = interrupt_data.get("action_requests", [])
 
