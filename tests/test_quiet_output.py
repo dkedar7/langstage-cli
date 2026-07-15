@@ -13,7 +13,7 @@ piped path these tests care about.
 from click.testing import CliRunner
 
 from langstage_cli import cli as c
-from langstage_cli.cli import main, print_chunk
+from langstage_cli.cli import main, print_chunk, _status
 
 
 def test_piped_single_shot_is_only_the_reply(tmp_path, monkeypatch):
@@ -118,6 +118,42 @@ def test_print_chunk_quiet_single_node_tokens_join_unbroken(capsys):
         print_chunk({"status": "streaming", "chunk": tok, "node": "answer"})
     out = capsys.readouterr().out
     assert out == "Hello world", repr(out)
+
+
+def test_status_strips_error_glyph_in_quiet(capsys):
+    # gh #76: the `⏺` in `_status(f"{RED}⏺ Error: …{RESET}")` is a literal glyph, not
+    # ANSI, so _disable_ansi() (which blanks RED/RESET) leaves it. Quiet mode routes
+    # the line to stderr AND must drop the glyph, matching print_chunk's bare
+    # `Error: …` quiet contract. Emulate a real quiet run: ansi disabled + _QUIET set.
+    c._disable_ansi()
+    c._QUIET = True
+    _status(f"{c.RED}⏺ Error: Agent file not found: /no/such/agent.py{c.RESET}")
+    captured = capsys.readouterr()
+    assert captured.out == "", repr(captured.out)  # reply stream stays clean
+    assert captured.err == "Error: Agent file not found: /no/such/agent.py\n", repr(captured.err)
+    assert "⏺" not in captured.err, repr(captured.err)
+
+
+def test_status_keeps_glyph_and_uses_stdout_when_not_quiet(capsys):
+    # The interactive (non-quiet) path is unchanged: the glyph stays and the line
+    # goes to stdout, so the terminal keeps its familiar decoration.
+    c._QUIET = False
+    _status("⏺ Error: boom")
+    captured = capsys.readouterr()
+    assert captured.out == "⏺ Error: boom\n", repr(captured.out)
+    assert captured.err == "", repr(captured.err)
+
+
+def test_error_stderr_has_no_glyph_in_quiet(tmp_path, monkeypatch):
+    # gh #76 end-to-end: a load error on the scriptable path routes to stderr (stdout
+    # stays clean) but must not carry the `⏺` glyph — the #74 suppression only covered
+    # BrokenPipeError, so every other error path still leaked it via _status().
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(main, ["-a", "no_such_module_xyz:graph", "hi"])
+    assert r.exit_code == 1
+    assert r.stdout.strip() == "", r.stdout  # nothing on the reply stream
+    assert "Error" in r.stderr, r.stderr
+    assert "⏺" not in r.stderr, repr(r.stderr)
 
 
 def test_broken_pipe_is_swallowed_not_surfaced(tmp_path, monkeypatch):

@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.6.15 - 2026-07-12
+## 0.6.16 - 2026-07-14
+
+### Fixed
+- **Quiet/scriptable error output still leaked the `⏺` glyph on every error path except
+  `BrokenPipeError` (gh #76).** Errors already route to stderr with color stripped, but the
+  `⏺` in `_status(f"{RED}⏺ Error: {e}{RESET}")` is a literal glyph, not an ANSI code, so
+  `_disable_ansi()` (which blanks `RED`/`RESET`) left it in place — the #74 fix only routed
+  around it for `BrokenPipeError`, so every other path (bad/missing agent spec, load failure,
+  a node exception, the generic top-level handlers) still printed `⏺ Error: …`, and on a
+  Windows cp1252 console the glyph became a `?`/replacement char via the `errors="replace"`
+  reconfigure. `_status()` now drops a leading `⏺ ` marker in quiet mode, in one place, so
+  every error/diagnostic path matches the bare `Error: …` that `print_chunk` already emits on
+  its own quiet error branch — completing the #74 suppression instead of special-casing one
+  exception type.
 
 ### Fixed
 - **Setting the documented `DEEPAGENT_SPEC` alias emitted a deprecation notice naming

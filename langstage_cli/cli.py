@@ -72,7 +72,18 @@ def _disable_ansi() -> None:
 
 def _status(msg: str) -> None:
     """Emit a status/diagnostic line off the reply stream: to stderr in quiet
-    mode (so it never pollutes the piped answer), to stdout otherwise."""
+    mode (so it never pollutes the piped answer), to stdout otherwise.
+
+    In quiet/scriptable mode also drop a leading ``⏺ `` marker. The glyph is a
+    literal in the caller's f-string (``f"{RED}⏺ Error: …{RESET}"``), not an ANSI
+    code, so ``_disable_ansi()`` — which blanks the surrounding color — leaves it
+    in place. Quiet mode is documented to suppress it, and the #74 fix only routed
+    around it for ``BrokenPipeError``; stripping it here, in one place, completes
+    that suppression so every error/diagnostic path matches the bare ``Error: …``
+    that ``print_chunk`` already emits on its own quiet error branch. (gh #76)
+    """
+    if _QUIET:
+        msg = msg.removeprefix("⏺ ")
     print(msg, file=sys.stderr if _QUIET else sys.stdout)
 
 
