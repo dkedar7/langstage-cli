@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.18 - 2026-07-15
+
+### Documentation
+- **README `## Commands` section was stale — it listed only 6 of the 9 interactive slash
+  commands.** Missing entirely were `/status`, `/version`, and `/verbose`; `/reset` omitted its
+  `/restart` alias; and `/config` was described as show-only when it also sets a runtime key
+  (`/config [key] [value]`). The section now lists every registered command with its aliases and
+  accurate description, matching what `/help` prints in the loop. Docs-only; no code change.
+
 ## 0.6.17 - 2026-07-15
 
 ### Fixed

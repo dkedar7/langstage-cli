@@ -93,12 +93,15 @@ langstage-cli --show-config
 ## Commands
 
 In the interactive loop:
-- `/quit` (`/q`, `/exit`) - Exit
+- `/help` (`/h`, `/?`) - Show this help message, or `/help <command>` for one command
+- `/status` (`/s`) - Show session status (agent, thread, sync/async mode, verbose, cwd)
+- `/version` (`/v`) - Show version and the current agent
+- `/config` (`/cfg`) - Show the resolved configuration, or set a runtime key: `/config [key] [value]`
+- `/verbose` - Toggle verbose output, or set it explicitly: `/verbose [on|off]`
+- `/history` (`/hist`) - Show recent conversation messages, optionally `/history [N]`
 - `/clear` (`/c`) - Clear conversation history
-- `/reset` - Reset the session
-- `/config` (`/cfg`) - Show the resolved configuration
-- `/history` (`/hist`) - Show conversation history
-- `/help` (`/h`, `/?`) - Show help
+- `/reset` (`/restart`) - Reset the session (clear history and start a new thread)
+- `/quit` (`/q`, `/exit`) - Exit
 - **Tab** autocompletes commands; **Ctrl+C** exits
 
 ## Environment Variables
