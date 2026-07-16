@@ -603,6 +603,43 @@ def get_tool_arg_preview(args: Dict[str, Any]) -> str:
     return first_val
 
 
+def format_interrupt_request(action: Any) -> Tuple[str, str]:
+    """Render one HITL interrupt ``action_request`` to a ``(label, preview)`` pair.
+
+    A generic LangGraph ``interrupt(...)`` may carry ANY value, not just a
+    deepagents ``ActionRequest``. The renderer must never ask the user to approve
+    an action whose description it silently threw away (gh #82):
+
+    - a deepagents/langchain ``ActionRequest`` (tool name under ``action`` — the
+      convention #69 fixed — or the legacy ``tool`` key) -> tool name + first-arg
+      preview, unchanged;
+    - any other dict -> its first human-readable field
+      (``description``/``question``/``message``/``prompt``), else a compact JSON
+      repr of the whole payload — instead of the old, content-dropping ``unknown``;
+    - a bare string / scalar -> the value itself (a ``.get`` on it used to raise).
+    """
+    if isinstance(action, dict):
+        tool = action.get("action") or action.get("tool")
+        if tool:
+            return str(tool), get_tool_arg_preview(action.get("args", {}))
+        for key in ("description", "question", "message", "prompt"):
+            val = action.get(key)
+            if isinstance(val, str) and val.strip():
+                return val, ""
+        # No recognized field — surface the payload compactly, never "unknown".
+        return _compact_repr(action), ""
+    return str(action), ""
+
+
+def _compact_repr(value: Any) -> str:
+    """A one-line, length-capped repr for an unrecognized interrupt payload."""
+    try:
+        text = json.dumps(value, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(value)
+    return text if len(text) <= 120 else text[:120] + "..."
+
+
 def format_result_preview(result: str) -> str:
     """Format a result preview with line count indicator."""
     if not result:
@@ -738,15 +775,28 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         print(f"\n{YELLOW}⚠ Action Required{RESET}")
         if action_requests:
             for i, action in enumerate(action_requests):
-                # The HumanInterrupt action_request keys the tool name under "action"
-                # (deepagents/langchain convention); a bare `.get("tool")` always missed
-                # and rendered "unknown" (gh #69). Fall back to "tool" for any agent that
-                # uses the older key, then to "unknown". Mirrors the vscode #44 fix.
-                tool = action.get("action") or action.get("tool") or "unknown"
-                args_preview = get_tool_arg_preview(action.get("args", {}))
-                print(f"  {DIM}{i + 1}. {tool}{RESET}")
+                # #69 taught the deepagents/langchain `ActionRequest` shape (tool name
+                # under `action`). But a generic `interrupt(...)` carries arbitrary
+                # values — a plain dict rendered `1. unknown` (dropping e.g. `question`)
+                # and a bare string raised `'str' has no attribute 'get'`. Render ANY
+                # payload actionably (gh #82); the structured tool path is unchanged.
+                label, args_preview = format_interrupt_request(action)
+                print(f"  {DIM}{i + 1}. {label}{RESET}")
                 if args_preview:
                     print(f"     {DIM}└─ {args_preview}{RESET}")
+        else:
+            # No structured action_requests. A bare-string/scalar interrupt loses its
+            # payload upstream (core's AG-UI adapter JSON-decodes it to `{}`), but if a
+            # raw value survives on the frame, surface it; otherwise say so, so the user
+            # never approves against a blank, contentless banner. (gh #82)
+            raw = interrupt_data.get("value")
+            if raw is None:
+                raw = interrupt_data.get("interrupt")
+            if raw in (None, "", {}, []):
+                print(f"  {DIM}(no action details provided){RESET}")
+            else:
+                label, _ = format_interrupt_request(raw)
+                print(f"  {DIM}{label}{RESET}")
 
     elif status == "complete":
         print_chunk._streaming_text = False  # turn over; next turn starts a fresh marker

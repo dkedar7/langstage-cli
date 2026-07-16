@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.19 - 2026-07-16
+
+### Fixed
+- **The HITL approval prompt rendered nothing useful for a *generic* LangGraph `interrupt(...)`
+  (gh #82).** #69 wired the deepagents `ActionRequest` shape (tool name under `action`), but the
+  renderer still assumed *every* interrupt was that shape, so an arbitrary `interrupt(...)` value —
+  the canonical HITL primitive from the LangGraph docs — was dropped: a plain dict such as
+  `interrupt({"question": "..."})` rendered `1. unknown` (silently discarding the `question` and
+  every other non-`action`/`tool`/`args` key), and a bare-string interrupt reaching the renderer as
+  a string `action_request` raised `'str' object has no attribute 'get'`. Either way the operator was
+  asked to approve or reject an action they could not see — and because approval can gate destructive
+  work, approving blind is a real hazard, not a cosmetic gap. `print_chunk()`'s interrupt branch now
+  renders **any** payload actionably via a new `format_interrupt_request()` helper: a bare string /
+  scalar shows the value itself; a dict without a recognized tool key surfaces its first
+  human-readable field (`description`/`question`/`message`/`prompt`) or, failing that, a compact JSON
+  repr of the whole payload instead of `unknown`; and the structured `action`/`tool` + args path is
+  unchanged. When `action_requests` is empty (a bare-string interrupt's payload is JSON-decoded to
+  `{}` and dropped upstream by `langstage-core`'s AG-UI adapter), the CLI now renders a surviving raw
+  interrupt `value` if present, else notes `(no action details provided)` so the banner is never
+  silently contentless. The invariant: the approval prompt must never ask the user to approve an
+  action whose description it silently threw away.
+
 ## 0.6.18 - 2026-07-15
 
 ### Documentation
