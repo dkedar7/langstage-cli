@@ -178,6 +178,105 @@ def test_print_chunk_interactive_keeps_hitl_banner(capsys):
     assert "delete_file" in out, repr(out)
 
 
+def test_hitl_renders_structured_action_with_args_unchanged(capsys):
+    # gh #82 regression guard: the deepagents ActionRequest path (#69) must render
+    # exactly as before — tool name from the `action` key plus a first-arg preview.
+    c._QUIET = False
+    print_chunk._streaming_text = False
+    print_chunk(
+        {
+            "status": "interrupt",
+            "interrupt": {
+                "action_requests": [{"action": "delete_file", "args": {"path": "/etc/passwd"}}]
+            },
+        }
+    )
+    out = capsys.readouterr().out
+    assert "1. delete_file" in out, repr(out)
+    assert "/etc/passwd" in out, repr(out)  # args preview intact
+    assert "unknown" not in out, repr(out)
+
+
+def test_hitl_renders_bare_string_interrupt(capsys):
+    # gh #82: a generic `interrupt("Approve ...?")` reaching the renderer as a bare
+    # string action_request used to raise `'str' object has no attribute 'get'`; the
+    # user must instead SEE the string they are approving.
+    c._QUIET = False
+    print_chunk._streaming_text = False
+    print_chunk(
+        {
+            "status": "interrupt",
+            "interrupt": {"action_requests": ["Approve deleting production database? (yes/no)"]},
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Action Required" in out, repr(out)
+    assert "Approve deleting production database? (yes/no)" in out, repr(out)
+    assert "unknown" not in out, repr(out)
+
+
+def test_hitl_renders_plain_dict_interrupt_content(capsys):
+    # gh #82: `interrupt({"question": "..."})` used to render `1. unknown`, silently
+    # dropping the question. The human-readable field must be surfaced instead.
+    c._QUIET = False
+    print_chunk._streaming_text = False
+    print_chunk(
+        {
+            "status": "interrupt",
+            "interrupt": {"action_requests": [{"question": "Approve deleting file X?"}]},
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Approve deleting file X?" in out, repr(out)
+    assert "unknown" not in out, repr(out)
+
+
+def test_hitl_renders_unrecognized_dict_as_compact_repr(capsys):
+    # gh #82: a dict with no known tool/human-readable key must still show its content
+    # (a compact repr), never the content-dropping `unknown`.
+    c._QUIET = False
+    print_chunk._streaming_text = False
+    print_chunk(
+        {
+            "status": "interrupt",
+            "interrupt": {"action_requests": [{"foo": "bar", "count": 3}]},
+        }
+    )
+    out = capsys.readouterr().out
+    assert "foo" in out and "bar" in out, repr(out)
+    assert "unknown" not in out, repr(out)
+
+
+def test_hitl_empty_action_requests_notes_missing_detail(capsys):
+    # gh #82: when the payload is dropped upstream (action_requests == []), the banner
+    # must not be silently contentless — it says no detail was provided so the operator
+    # knows they'd be approving blind.
+    c._QUIET = False
+    print_chunk._streaming_text = False
+    print_chunk({"status": "interrupt", "interrupt": {"action_requests": []}})
+    out = capsys.readouterr().out
+    assert "Action Required" in out, repr(out)
+    assert "no action details" in out, repr(out)
+
+
+def test_hitl_empty_action_requests_surfaces_raw_value(capsys):
+    # gh #82: if a raw interrupt value survives on the frame even when action_requests
+    # is empty, render it rather than the "no detail" note.
+    c._QUIET = False
+    print_chunk._streaming_text = False
+    print_chunk(
+        {
+            "status": "interrupt",
+            "interrupt": {
+                "action_requests": [],
+                "value": "Approve deleting production database?",
+            },
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Approve deleting production database?" in out, repr(out)
+
+
 def test_hitl_quiet_stdout_is_only_the_reply(tmp_path, monkeypatch):
     # gh #77 end-to-end: a HITL agent run with --no-interactive on the scriptable path
     # (single-shot + piped => quiet). stdout must be ONLY the agent's reply — no banner,
