@@ -18,7 +18,7 @@ pytest.importorskip("ag_ui_langgraph")
 pytest.importorskip("fastapi")
 
 from langstage_cli.agui_stream import build_session_agent  # noqa: E402
-from langstage_cli.cli import print_chunk, run_single_turn_agui  # noqa: E402
+from langstage_cli.cli import Spinner, print_chunk, run_single_turn_agui  # noqa: E402
 
 
 async def test_turn_reports_error_frame_for_nonzero_exit(monkeypatch):
@@ -44,6 +44,23 @@ async def test_successful_turn_reports_no_error():
     agent = build_session_agent(load_agent_spec("langstage_core.demo.stub:graph"))
     _elapsed, had_error = await run_single_turn_agui(agent, "hi", "t-ok", interactive=False)
     assert had_error is False
+
+
+async def test_turn_does_not_clear_output_after_first_chunk(monkeypatch):
+    async def fake_stream(agent, message, thread_id, resume=None):
+        yield {"status": "streaming", "chunk": "visible reply", "node": "agent"}
+
+    import langstage_cli.agui_stream as agui_mod
+
+    monkeypatch.setattr(agui_mod, "agui_stream_updates", fake_stream)
+    monkeypatch.setattr(Spinner, "_spin", lambda self: None)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        await run_single_turn_agui(object(), "hi", "t-visible", interactive=False)
+
+    out = buf.getvalue()
+    assert out.count("\r\033[2K") == 1
+    assert out.endswith("visible reply")
 
 
 def test_print_chunk_breaks_on_node_change_nonverbose():

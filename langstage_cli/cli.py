@@ -253,6 +253,8 @@ class Spinner:
 
     def stop(self):
         """Stop the spinner and clear the line."""
+        if not self.running:
+            return
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.2)
