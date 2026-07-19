@@ -82,11 +82,12 @@ def test_show_config_includes_the_configurable_table(tmp_path, monkeypatch):
 def test_show_config_omits_server_only_keys():
     """The terminal CLI starts no server and titles the header from the graph
     name, so host/port/debug/title are inert and must not be advertised (gh #36).
-    stream_mode is likewise omitted — it's a deprecated no-op (gh #62)."""
+    stream_mode is likewise omitted — it's a deprecated no-op (gh #62) — and so is
+    async_mode, inert since ADR 0003 collapsed everything onto one path (gh #88)."""
     with CliRunner().isolated_filesystem():
         r = CliRunner().invoke(main, ["--show-config"])
     assert r.exit_code == 0, r.output
-    for key in ("host", "port", "debug", "title", "stream_mode"):
+    for key in ("host", "port", "debug", "title", "stream_mode", "async_mode"):
         assert not re.search(rf"^\s*{key}\s*=", r.output, re.MULTILINE), f"{key} should be omitted"
     # ...but keys the CLI actually honors are still shown.
     assert re.search(r"^\s*agent_spec\s*=", r.output, re.MULTILINE), r.output

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.21 - 2026-07-19
+
+### Changed
+- **`--async-mode`/`--sync-mode` and `--agui` are deprecated — they were no-ops advertised as
+  features (gh #88).** CHANGELOG 0.6.0 (ADR 0003) said the `--agui`/`--async`/`--stream-mode` flags
+  were accepted-and-ignored *"for one release"*. `--stream-mode` was duly retired in #62;
+  `--async-mode`/`--sync-mode` and `--agui` were still shipping **20 patch releases later**, still
+  inert, and still presented as working controls. Root cause is that ADR 0003 collapsed every turn
+  onto the single async AG-UI path (`run_single_turn_agui` → `agui_stream.agui_stream_updates` →
+  `core.agui.iter_chunk_frames`), leaving no second behavior for either flag to select: `use_async`
+  was resolved, stored in the session context, and read in exactly three places — `/status`,
+  `/config`, and `--show-config` — **all display-only**, with no `if use_async:` branch anywhere in
+  `run()`, so `--sync-mode` and `--async-mode` produced byte-identical output; `use_agui` was passed
+  into `run()` and never read at all. `--agui`'s help text was additionally describing a mechanism
+  that no longer exists ("instead of the built-in event parser" — since langstage-core 1.0 the AG-UI
+  adapter *is* the only path, and the `[agui]` extra has been a redundant alias since 0.6.1). Rather
+  than wire a dead knob up to something invented, both are now retired with the same posture
+  `--stream-mode` got: hidden from `--help`, dropped from the README (the CLI Options row and the
+  `langstage.toml` `[ui] async_mode` example), omitted from `--show-config`, removed from `/status`
+  (the "Mode: async/sync" line, which reported a distinction the runtime does not have) and from the
+  `/config` key map, no longer resolved from `[ui] async_mode`, and accepted-and-ignored on the CLI
+  (so an existing `--async-mode` / `--agui` invocation doesn't hard-error) with a one-line
+  deprecation notice. An existing `langstage.toml` that still sets `[ui] async_mode` keeps loading
+  untouched — the key is simply ignored, never an error, since a config file that suddenly failed to
+  resolve would be a worse regression than the dead knob it retires. No streaming behavior changes.
+  New tests assert the flags are gone from `--help`/`--show-config`/`/status`/`/config`, that each is
+  still accepted with a notice, and that a TOML carrying the retired key still loads.
+
 ## 0.6.20 - 2026-07-18
 
 ### Fixed

@@ -1,4 +1,7 @@
-"""Tests for the experimental in-process AG-UI streaming path (--agui, ADR 0002).
+"""Tests for the in-process AG-UI streaming path (ADR 0002, ADR 0003).
+
+Started life behind the experimental `--agui` flag; since langstage-core 1.0 this is
+the only streaming path and that flag is a deprecated no-op (gh #88).
 
 Skipped unless the agui extra is installed. The dev extra pulls it so CI runs these.
 """
