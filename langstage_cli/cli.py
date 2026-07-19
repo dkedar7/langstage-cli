@@ -225,6 +225,8 @@ class Spinner:
         self.thread = None
         self.frame_idx = 0
         self.start_time = None
+        # Whether stop() has already emitted its line-clear. See stop(). (gh #84)
+        self._stopped = False
 
     def _spin(self):
         """Run the spinner animation with elapsed time display."""
@@ -247,12 +249,32 @@ class Spinner:
     def start(self):
         """Start the spinner."""
         self.running = True
+        self._stopped = False
         self.start_time = time.time()
         self.thread = threading.Thread(target=self._spin, daemon=True)
         self.thread.start()
 
     def stop(self):
-        """Stop the spinner and clear the line."""
+        """Stop the spinner and clear its line. Idempotent — a second stop() is a
+        no-op (gh #84).
+
+        The line-clear below is ``CR`` + ``CSI 2K`` ("erase entire line"), which is
+        only ever correct while the cursor is still parked on the spinner's own
+        animated line. ``run_single_turn_agui()`` stops the spinner twice per turn:
+        once on the first chunk (correct — that clears "Thinking…") and again in its
+        ``finally``, which exists so a turn that streams NO chunks still clears the
+        line instead of leaving a dangling "Thinking…". But by the time the
+        ``finally`` runs on a normal turn the reply has been printed with ``end=""``
+        and no terminating newline, so the cursor sits on the *reply's* last line —
+        and the second clear erased it. On a real terminal the user saw their prompt
+        and the timing line with the agent's answer wiped out (a one-line reply
+        vanished entirely; a multi-line reply lost its last line). Guarding on
+        ``_stopped`` keeps the useful first clear and the no-chunk safety net while
+        making the redundant second call harmless.
+        """
+        if self._stopped:
+            return
+        self._stopped = True
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.2)
