@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.6.20 - 2026-07-18
+
+### Fixed
+- **The interactive conversation loop erased every agent reply on a real terminal (gh #84).** The
+  headline documented workflow — `langstage-cli --demo` / `-a my_agent.py:graph` — showed the user
+  their own prompt and the timing line with the agent's answer *missing*. `run_single_turn_agui()`
+  stops the spinner twice per turn: once on the first chunk (correct — that clears the "Thinking…"
+  animation) and again in a `finally`, which exists so a turn that streams no chunks at all still
+  clears the line instead of leaving a dangling "Thinking…". But `Spinner.stop()` ends with
+  `print("\r\033[2K")` — CR plus "erase entire line" — and the reply is streamed with `end=""` and
+  never terminated by a newline, so by the time the `finally` ran the cursor was parked on the
+  *reply's* last line and the second clear wiped it; `print_timing()` then wrote over where the reply
+  had been. A one-line reply — the common case — vanished entirely, and a multi-line reply lost its
+  last line, confirming a single current-line `CSI 2K`. This never reproduced in single-shot, piped,
+  or `--quiet` runs because those have no spinner (`spinner = None if _QUIET else …`), which is
+  exactly why the existing suite and the README one-liner looked healthy while the primary
+  interactive feature was unusable. `Spinner.stop()` is now idempotent — it emits its line-clear at
+  most once per run, reset on `start()` — so the useful first clear and the no-chunk safety net both
+  survive while the redundant second call becomes a no-op. Regression tests replay the emitted byte
+  stream through a minimal VT model (CR / `CSI 2K` / newline) and assert the reply is still on the
+  rendered screen, since `pty.fork()` is Unix-only and a stopped-twice assertion would only couple to
+  the implementation.
+- **Human-in-the-loop approval crashed with a cryptic `Error: (25, 'Inappropriate ioctl for device')`
+  on a non-TTY, after leaking the approval menu to stdout (gh #86).** In default interactive mode, an
+  agent raising a LangGraph `interrupt(...)` under a piped / CI / cron run — the scriptable context
+  the README actively promotes (`answer=$(langstage-cli -a my_agent.py:graph "do X")`) — hit
+  `get_key()`, whose Unix branch calls `termios.tcgetattr(fd)` with no `sys.stdin.isatty()` guard;
+  `tcgetattr` raises on a non-terminal, surfacing as a raw errno with no hint that `--no-interactive`
+  exists. Compounding it, `select_option()` printed the prompt, the `\033[?25l` cursor-hide escape,
+  and all four menu options to **stdout** *before* ever reading a key — corrupting the very stream a
+  piped single-shot run is contractually supposed to fill with only the agent's reply. The CLI
+  already detected a non-TTY for the quiet/scriptable decision; that detection simply was not applied
+  to the approval path. `handle_interrupt_input()` now checks stdin **before anything is printed** and
+  exits `1` with an actionable message on stderr (`Error: approval required but stdin is not a
+  terminal. / Re-run with --no-interactive to auto-approve pending actions.`), leaving stdout
+  untouched. It deliberately does *not* silently auto-approve: `interrupt()` is a request for human
+  review, so approving an action nobody saw is a worse failure than stopping — `--no-interactive`
+  remains the documented, explicit opt-in and its behavior is unchanged. Both call sites now share one
+  `_is_a_tty()` helper that never raises on a closed or replaced stream.
+
 ## 0.6.19 - 2026-07-16
 
 ### Fixed

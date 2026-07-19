@@ -56,6 +56,20 @@ BRIGHT_GREEN, BRIGHT_YELLOW = "\033[92m", "\033[93m"
 _QUIET = False
 
 
+def _is_a_tty(stream) -> bool:
+    """``stream.isatty()`` that never raises.
+
+    A replaced or closed stream (pytest capture, a detached service, a stream
+    swapped for a plain object) may lack ``isatty`` or raise ``ValueError`` on a
+    closed file. Treat anything unknowable as "not a terminal" — the safe default
+    for both the quiet/scriptable decision and the interactive-approval guard.
+    """
+    try:
+        return stream.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
 def _disable_ansi() -> None:
     """Blank every ANSI constant so nothing colorized reaches a pipe or file.
 
@@ -225,6 +239,8 @@ class Spinner:
         self.thread = None
         self.frame_idx = 0
         self.start_time = None
+        # Whether stop() has already emitted its line-clear. See stop(). (gh #84)
+        self._stopped = False
 
     def _spin(self):
         """Run the spinner animation with elapsed time display."""
@@ -247,12 +263,32 @@ class Spinner:
     def start(self):
         """Start the spinner."""
         self.running = True
+        self._stopped = False
         self.start_time = time.time()
         self.thread = threading.Thread(target=self._spin, daemon=True)
         self.thread.start()
 
     def stop(self):
-        """Stop the spinner and clear the line."""
+        """Stop the spinner and clear its line. Idempotent — a second stop() is a
+        no-op (gh #84).
+
+        The line-clear below is ``CR`` + ``CSI 2K`` ("erase entire line"), which is
+        only ever correct while the cursor is still parked on the spinner's own
+        animated line. ``run_single_turn_agui()`` stops the spinner twice per turn:
+        once on the first chunk (correct — that clears "Thinking…") and again in its
+        ``finally``, which exists so a turn that streams NO chunks still clears the
+        line instead of leaving a dangling "Thinking…". But by the time the
+        ``finally`` runs on a normal turn the reply has been printed with ``end=""``
+        and no terminating newline, so the cursor sits on the *reply's* last line —
+        and the second clear erased it. On a real terminal the user saw their prompt
+        and the timing line with the agent's answer wiped out (a one-line reply
+        vanished entirely; a multi-line reply lost its last line). Guarding on
+        ``_stopped`` keeps the useful first clear and the no-chunk safety net while
+        making the redundant second call harmless.
+        """
+        if self._stopped:
+            return
+        self._stopped = True
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.2)
@@ -930,6 +966,24 @@ def handle_interrupt_input(num_actions: int = 1) -> List[Dict[str, Any]]:
     Returns:
         List of decision objects (one for each pending action)
     """
+    # The approval menu is arrow-key driven, so it needs a real terminal on stdin.
+    # Without this guard a piped / CI / cron run (`… "do X" </dev/null`) printed the
+    # cursor-hide escape and the whole menu to STDOUT — violating the contract that a
+    # piped single-shot run carries only the agent's reply — and then crashed inside
+    # get_key(): `termios.tcgetattr()` raises on a non-tty, surfacing as a cryptic
+    # `Error: (25, 'Inappropriate ioctl for device')`. Check BEFORE anything is
+    # printed, and fail loudly rather than auto-approving: an interrupt() is a request
+    # for human review, so silently approving an action nobody saw is worse than
+    # stopping. `--no-interactive` remains the documented way to opt into
+    # auto-approval, and the message points at it. (gh #86)
+    if not _is_a_tty(sys.stdin):
+        print(
+            "Error: approval required but stdin is not a terminal.\n"
+            "Re-run with --no-interactive to auto-approve pending actions.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     options = [
         "Approve all actions",
         "Reject all actions",
@@ -1680,10 +1734,7 @@ def main(
     # so the consumer gets only the reply/verdict (no spinner or "Loaded" line);
     # --quiet forces it in a terminal. Color is additionally stripped whenever stdout
     # is not a TTY, matching well-behaved CLIs.
-    try:
-        _is_tty = sys.stdout.isatty()
-    except (AttributeError, ValueError):
-        _is_tty = False
+    _is_tty = _is_a_tty(sys.stdout)
     global _QUIET
     _QUIET = quiet or ((bool(message or prompt_file) or verify_agent) and not _is_tty)
     if _QUIET or not _is_tty:
