@@ -45,16 +45,29 @@ def test_stream_mode_env_and_toml_are_deprecated_and_ignored(isolated, tmp_path)
     assert cfg.sources["stream_mode"] == "default"
 
 
+def test_async_mode_toml_is_deprecated_and_ignored(isolated, tmp_path):
+    # gh #88: async_mode has no effect since ADR 0003 collapsed every turn onto the one
+    # async AG-UI path, so it is no longer resolved from `[ui] async_mode`. A config file
+    # that still sets it must keep LOADING (the key is ignored, never an error) — a
+    # langstage.toml that suddenly failed to resolve would be a far worse regression than
+    # the dead knob it retires.
+    _toml(tmp_path, '[agent]\nspec = "a.py:g"\n[ui]\nasync_mode = true\n')
+    cfg = CodeConfig.resolve(env={}, toml_start=tmp_path)
+    assert cfg.async_mode is False  # default, TOML not applied
+    assert cfg.sources["async_mode"] == "default"
+    # ...and the rest of the file still resolves normally.
+    assert cfg.agent_spec == "a.py:g"
+
+
 def test_toml_keys(isolated, tmp_path):
     _toml(
         tmp_path,
-        '[agent]\nspec = "a.py:g"\ngraph_name = "myg"\n[ui]\nverbose = true\nasync_mode = true\n',
+        '[agent]\nspec = "a.py:g"\ngraph_name = "myg"\n[ui]\nverbose = true\n',
     )
     cfg = CodeConfig.resolve(env={}, toml_start=tmp_path)
     assert cfg.agent_spec == "a.py:g"
     assert cfg.graph_name == "myg"
     assert cfg.verbose is True
-    assert cfg.async_mode is True
 
 
 def test_deepagent_spec_alias_is_deprecated(isolated, tmp_path):

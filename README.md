@@ -141,7 +141,6 @@ root = "."
 
 [ui]
 verbose = true
-async_mode = false
 
 [configurable]
 # seeds LangGraph RunnableConfig.configurable
@@ -161,7 +160,6 @@ Options:
   -g, --graph-name TEXT           Graph variable name (default: "graph")
   -f, --file PATH                 Read message from a file (any extension)
   --interactive/--no-interactive  Handle interrupts (default: interactive)
-  --async-mode/--sync-mode        Async streaming (default: sync)
   -v, --verbose                   Verbose output
   --demo                          Run with the built-in keyless demo agent
   --show-config                   Print the resolved configuration and exit

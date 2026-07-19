@@ -25,5 +25,9 @@ def test_help_leads_with_canonical_names():
     # ...and the deprecated, no-op stream-mode knob is no longer advertised (gh #62)
     assert "LANGSTAGE_STREAM_MODE" not in out
     assert "--stream-mode" not in out
+    # ...nor the equally dead async-mode / agui knobs (gh #88)
+    assert "--async-mode" not in out
+    assert "--sync-mode" not in out
+    assert "--agui" not in out
     # ...and the legacy names are no longer presented as the only config vocab
     assert "DEEPAGENT_AGENT_SPEC" not in out

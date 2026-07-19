@@ -1,24 +1,21 @@
-"""Experimental in-process AG-UI streaming path for the cli (``--agui``).
+"""The cli's in-process AG-UI streaming path.
 
-Instead of parsing ``graph.stream()`` via ``langgraph-stream-parser``'s event
-layer, this drives the agent through the official ``ag-ui-langgraph`` adapter
-in-process (no web server) and maps AG-UI events onto the cli's existing
-``print_chunk`` chunk contract — so the renderer is unchanged.
+Drives the agent through the official ``ag-ui-langgraph`` adapter in-process (no
+web server) and maps AG-UI events onto the cli's ``print_chunk`` chunk contract —
+so the renderer is unchanged. Text, tool calls, and tool *results* all render, and
+interrupts are fully supported: they DISPLAY as a ``CustomEvent(on_interrupt)`` and
+RESUME via ``forwarded_props.command.resume`` (ADR 0002 gate 2, resolved).
 
-This is the first step of ADR 0002 (retire the bespoke event layer, converge on
-AG-UI). Text + tool calls/results are at parity with the default path (and the
-AG-UI path additionally surfaces tool *results*). Interrupts are fully supported:
-they DISPLAY as a ``CustomEvent(on_interrupt)`` and RESUME via
-``forwarded_props.command.resume`` (ADR 0002 gate 2, resolved).
-
-Requires the ``agui`` extra::
-
-    pip install "langstage-cli[agui]"
+ADR 0002 started this as an experimental opt-in behind ``--agui``, alongside a
+bespoke event-parser path. ADR 0003 finished the migration: since langstage-core
+1.0 this is the ONLY streaming path, there is no parser to fall back to, and the
+``agui`` extra is a redundant alias (AG-UI ships as a base dependency, CHANGELOG
+0.6.1). The ``--agui`` flag it was named for is deprecated and inert (gh #88).
 """
 
 from typing import Any, AsyncIterator, Dict
 
-_IMPORT_HINT = 'the --agui path needs the agui extra: pip install "langstage-cli[agui]"'
+_IMPORT_HINT = 'the AG-UI streaming path needs: pip install "langstage-core[agui]"'
 
 
 def ensure_agui_available() -> None:

@@ -92,13 +92,18 @@ class CodeConfig(HostConfig):
     stream_mode: str = "auto"
     graph_name: str = "graph"
     verbose: bool = False
+    # async_mode is likewise retained as an inert field (default only) so nothing that
+    # reads the dataclass breaks, but it is DEPRECATED: ADR 0003 collapsed every turn
+    # onto the single async AG-UI path, so `--async-mode` / `--sync-mode` selected
+    # between two identical behaviors. It is no longer resolved from `[ui] async_mode`
+    # and is omitted from `--show-config`. An existing `langstage.toml` that still sets
+    # the key keeps loading — the key is simply ignored, never an error. (gh #88)
     async_mode: bool = False
 
     _ENV: ClassVar[dict] = {}
     _TOML: ClassVar[dict] = {
         "graph_name": "agent.graph_name",
         "verbose": "ui.verbose",
-        "async_mode": "ui.async_mode",
     }
 
     @classmethod

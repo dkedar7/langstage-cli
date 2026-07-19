@@ -105,8 +105,10 @@ def _status(msg: str) -> None:
 # the diagnostic only advertises knobs that actually do something. The inherited
 # HostConfig server keys — it starts no server (host/port/debug are inert) and the
 # header box uses the loaded graph's name, not `title` (gh #36) — plus `stream_mode`,
-# which has had no effect since the AG-UI streaming migration (gh #62).
-_INERT_KEYS = ["host", "port", "debug", "title", "stream_mode"]
+# which has had no effect since the AG-UI streaming migration (gh #62), and
+# `async_mode`, inert since ADR 0003 collapsed every turn onto the one async AG-UI
+# path (gh #88).
+_INERT_KEYS = ["host", "port", "debug", "title", "stream_mode", "async_mode"]
 
 # Spinner frames for thinking animation
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -1112,13 +1114,13 @@ def cmd_status(args: str, context: Dict[str, Any]) -> Optional[str]:
     thread_id = config.get("configurable", {}).get("thread_id", "N/A")
     agent_name = context.get("agent_name", "Unknown")
     verbose = context.get("verbose", False)
-    use_async = context.get("use_async", False)
 
     print(f"\n{BOLD}{BRIGHT_CYAN}Session Status{RESET}")
     print(f"{DIM}{'─' * 30}{RESET}")
     print(f"  {DIM}Agent:{RESET}       {agent_name}")
     print(f"  {DIM}Thread ID:{RESET}   {thread_id[:8]}...")
-    print(f"  {DIM}Mode:{RESET}        {'async' if use_async else 'sync'}")
+    # No "Mode: async/sync" line: since ADR 0003 there is exactly one (async) path,
+    # so the value was reporting a distinction the runtime does not have (gh #88).
     print(f"  {DIM}Verbose:{RESET}     {'on' if verbose else 'off'}")
     print(f"  {DIM}CWD:{RESET}         {os.getcwd()}")
     print()
@@ -1170,9 +1172,10 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
             configurable = config.get("configurable", {})
             if key in configurable:
                 print(f"\n{CYAN}{key}:{RESET} {configurable[key]}\n")
-            elif key in ("verbose", "async_mode", "stream_mode"):
-                ctx_key = "use_async" if key == "async_mode" else key
-                print(f"\n{CYAN}{key}:{RESET} {context.get(ctx_key)}\n")
+            elif key in ("verbose", "stream_mode"):
+                # async_mode is gone from this map: it was a dead knob whose only
+                # remaining job was to report itself back to the user (gh #88).
+                print(f"\n{CYAN}{key}:{RESET} {context.get(key)}\n")
             else:
                 print(f"{YELLOW}Unknown config key: {key}{RESET}")
         else:
@@ -1423,8 +1426,6 @@ def run_conversation_loop(
     config: Dict[str, Any],
     agent_name: str = "Agent",
     agent_description: Optional[str] = None,
-    use_async: bool = False,
-    use_agui: bool = False,
     interactive: bool = True,
     verbose: bool = False,
     stream_mode: str = "updates",
@@ -1454,7 +1455,6 @@ def run_conversation_loop(
         "graph": graph,
         "config": config,
         "agent_name": agent_name,
-        "use_async": use_async,
         "interactive": interactive,
         "verbose": verbose,
         "stream_mode": stream_mode,
@@ -1613,7 +1613,12 @@ def run_conversation_loop(
     "--async-mode/--sync-mode",
     "use_async",
     default=None,
-    help="Use async streaming (default: sync)",
+    # DEPRECATED (gh #88): a no-op since ADR 0003 collapsed every turn onto the single
+    # async AG-UI path — `--sync-mode` and `--async-mode` produce byte-identical output.
+    # Kept hidden + accepted so existing invocations don't hard-error; a one-line notice
+    # fires when either spelling is passed. Same posture as --stream-mode (gh #62).
+    hidden=True,
+    help="(deprecated: no effect — every turn streams through the one async path).",
 )
 @click.option(
     "--stream-mode",
@@ -1641,9 +1646,13 @@ def run_conversation_loop(
     "--agui",
     is_flag=True,
     default=False,
-    help="[experimental] Stream via the in-process AG-UI adapter instead of the "
-    "built-in event parser (text, tool calls/results, and interrupts). "
-    'Requires the agui extra: pip install "langstage-cli[agui]".',
+    # DEPRECATED (gh #88): never read. It once opted into the experimental in-process
+    # AG-UI adapter "instead of the built-in event parser"; since langstage-core 1.0
+    # that adapter is the ONLY streaming path, so there is nothing left to opt into
+    # (and the [agui] extra is a redundant alias — CHANGELOG 0.6.1). Hidden + accepted
+    # so existing invocations don't hard-error, with a one-line notice.
+    hidden=True,
+    help="(deprecated: no effect — the AG-UI adapter is the only streaming path).",
 )
 @click.option(
     "--show-config",
@@ -1758,7 +1767,6 @@ def main(
         "stream_mode": stream_mode,
         # bool flags only override when actually passed; otherwise fall back to
         # TOML/env/default.
-        "async_mode": True if use_async else None,
         "verbose": True if verbose else None,
     }
 
@@ -1768,6 +1776,21 @@ def main(
         _status(
             f"{DIM}⏺ Note: --stream-mode is deprecated and has no effect "
             f"(streaming is uniform since the AG-UI migration).{RESET}"
+        )
+
+    # --async-mode/--sync-mode and --agui are deprecated and inert too (gh #88): ADR
+    # 0003 collapsed every turn onto the one async AG-UI path, so neither flag has a
+    # branch left to take. Same posture as --stream-mode above — accepted so existing
+    # invocations don't hard-error, with one notice each.
+    if use_async is not None:
+        _status(
+            f"{DIM}⏺ Note: --async-mode/--sync-mode is deprecated and has no effect "
+            f"(every turn streams through the one async path).{RESET}"
+        )
+    if agui:
+        _status(
+            f"{DIM}⏺ Note: --agui is deprecated and has no effect "
+            f"(the AG-UI adapter is the only streaming path).{RESET}"
         )
 
     if show_config:
@@ -1834,7 +1857,6 @@ def main(
         # accepted-and-ignored flag now (env/TOML no longer resolve it), so there is
         # nothing to validate; it changes no rendering.
         final_stream_mode = cfg.stream_mode
-        use_async = cfg.async_mode
         verbose = cfg.verbose
         # Whether a workspace root was explicitly configured (vs the default cwd);
         # cli chdirs into it only when it was, matching prior behavior.
@@ -1917,8 +1939,6 @@ def main(
             config=config_dict,
             agent_name=agent_name,
             agent_description=agent_description,
-            use_async=use_async,
-            use_agui=agui,
             interactive=interactive,
             verbose=verbose,
             stream_mode=final_stream_mode,
