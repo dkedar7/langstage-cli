@@ -56,6 +56,20 @@ BRIGHT_GREEN, BRIGHT_YELLOW = "\033[92m", "\033[93m"
 _QUIET = False
 
 
+def _is_a_tty(stream) -> bool:
+    """``stream.isatty()`` that never raises.
+
+    A replaced or closed stream (pytest capture, a detached service, a stream
+    swapped for a plain object) may lack ``isatty`` or raise ``ValueError`` on a
+    closed file. Treat anything unknowable as "not a terminal" — the safe default
+    for both the quiet/scriptable decision and the interactive-approval guard.
+    """
+    try:
+        return stream.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
 def _disable_ansi() -> None:
     """Blank every ANSI constant so nothing colorized reaches a pipe or file.
 
@@ -952,6 +966,24 @@ def handle_interrupt_input(num_actions: int = 1) -> List[Dict[str, Any]]:
     Returns:
         List of decision objects (one for each pending action)
     """
+    # The approval menu is arrow-key driven, so it needs a real terminal on stdin.
+    # Without this guard a piped / CI / cron run (`… "do X" </dev/null`) printed the
+    # cursor-hide escape and the whole menu to STDOUT — violating the contract that a
+    # piped single-shot run carries only the agent's reply — and then crashed inside
+    # get_key(): `termios.tcgetattr()` raises on a non-tty, surfacing as a cryptic
+    # `Error: (25, 'Inappropriate ioctl for device')`. Check BEFORE anything is
+    # printed, and fail loudly rather than auto-approving: an interrupt() is a request
+    # for human review, so silently approving an action nobody saw is worse than
+    # stopping. `--no-interactive` remains the documented way to opt into
+    # auto-approval, and the message points at it. (gh #86)
+    if not _is_a_tty(sys.stdin):
+        print(
+            "Error: approval required but stdin is not a terminal.\n"
+            "Re-run with --no-interactive to auto-approve pending actions.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     options = [
         "Approve all actions",
         "Reject all actions",
@@ -1702,10 +1734,7 @@ def main(
     # so the consumer gets only the reply/verdict (no spinner or "Loaded" line);
     # --quiet forces it in a terminal. Color is additionally stripped whenever stdout
     # is not a TTY, matching well-behaved CLIs.
-    try:
-        _is_tty = sys.stdout.isatty()
-    except (AttributeError, ValueError):
-        _is_tty = False
+    _is_tty = _is_a_tty(sys.stdout)
     global _QUIET
     _QUIET = quiet or ((bool(message or prompt_file) or verify_agent) and not _is_tty)
     if _QUIET or not _is_tty:
