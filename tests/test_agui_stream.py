@@ -153,3 +153,40 @@ def test_interrupt_resume_continues_the_graph():
     assert not any(c.get("status") == "interrupt" for c in resumed), resumed
     text = "".join(c["chunk"] for c in resumed if "chunk" in c)
     assert "resolved:" in text and "accept" in text
+
+
+def _snapshot_tool_graph():
+    """The issue #91 shape: custom nodes returning finished messages, ToolMessage
+    appended manually (no ToolNode) -> everything via MessagesSnapshotEvent, no
+    streaming ToolCall events. Before langstage-core 1.0.24 the snapshot path
+    dropped tool calls/results here; the >=1.0.24 floor delivers the fix."""
+    def call_tool(state):
+        return {"messages": [AIMessage(content="Let me check the weather.", tool_calls=[
+            {"name": "get_weather", "args": {"city": "Paris"}, "id": "call_1"}])]}
+
+    def run_tool(state):
+        return {"messages": [ToolMessage(content="Sunny, 24C", tool_call_id="call_1")]}
+
+    def final(state):
+        return {"messages": [AIMessage(content="The weather in Paris is sunny, 24C.")]}
+
+    g = StateGraph(MessagesState)
+    for n, f in [("call_tool", call_tool), ("run_tool", run_tool), ("final", final)]:
+        g.add_node(n, f)
+    g.add_edge(START, "call_tool"); g.add_edge("call_tool", "run_tool")
+    g.add_edge("run_tool", "final"); g.add_edge("final", END)
+    return g.compile()
+
+
+def test_non_streaming_tool_agent_surfaces_tool_call_and_result():
+    """gh #91: a non-token tool agent's tool call + result must reach the CLI stream
+    (they render via print_chunk's `● name` / `↳ result` branches). Requires the
+    langstage-core snapshot fix delivered by the >=1.0.24 floor."""
+    agent = build_session_agent(_snapshot_tool_graph())
+    chunks = _collect(agent, "weather in paris?")
+    calls = [c for c in chunks if "tool_calls" in c]
+    results = [c for c in chunks if "tool_result" in c]
+    assert calls and calls[0]["tool_calls"][0]["name"] == "get_weather", \
+        "tool call dropped on the CLI snapshot path (needs langstage-core >= 1.0.24, gh #91)"
+    assert results and results[0]["tool_result"] == "Sunny, 24C", \
+        "tool result dropped on the CLI snapshot path (needs langstage-core >= 1.0.24, gh #91)"
