@@ -160,9 +160,16 @@ def _snapshot_tool_graph():
     appended manually (no ToolNode) -> everything via MessagesSnapshotEvent, no
     streaming ToolCall events. Before langstage-core 1.0.24 the snapshot path
     dropped tool calls/results here; the >=1.0.24 floor delivers the fix."""
+
     def call_tool(state):
-        return {"messages": [AIMessage(content="Let me check the weather.", tool_calls=[
-            {"name": "get_weather", "args": {"city": "Paris"}, "id": "call_1"}])]}
+        return {
+            "messages": [
+                AIMessage(
+                    content="Let me check the weather.",
+                    tool_calls=[{"name": "get_weather", "args": {"city": "Paris"}, "id": "call_1"}],
+                )
+            ]
+        }
 
     def run_tool(state):
         return {"messages": [ToolMessage(content="Sunny, 24C", tool_call_id="call_1")]}
@@ -188,7 +195,9 @@ def test_non_streaming_tool_agent_surfaces_tool_call_and_result():
     chunks = _collect(agent, "weather in paris?")
     calls = [c for c in chunks if "tool_calls" in c]
     results = [c for c in chunks if "tool_result" in c]
-    assert calls and calls[0]["tool_calls"][0]["name"] == "get_weather", \
+    assert calls and calls[0]["tool_calls"][0]["name"] == "get_weather", (
         "tool call dropped on the CLI snapshot path (needs langstage-core >= 1.0.24, gh #91)"
-    assert results and results[0]["tool_result"] == "Sunny, 24C", \
+    )
+    assert results and results[0]["tool_result"] == "Sunny, 24C", (
         "tool result dropped on the CLI snapshot path (needs langstage-core >= 1.0.24, gh #91)"
+    )
