@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langstage-cli"
-version = "0.6.21"
+version = "0.6.22"
 description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,7 +31,7 @@ dependencies = [
     # is a HARD dep. A bare `pip install langstage-cli` must be able to run a turn.
     # >=1.0.6 for the shared preflight primitive core.verify() used by --verify.
     # >=1.0.14 for describe(configurable=) — the single complete config diagnostic.
-    "langstage-core[agui]>=1.0.14",
+    "langstage-core[agui]>=1.0.24",
     "click>=8.0.0",
     "python-dotenv",
 ]

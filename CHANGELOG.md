@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.22 - 2026-07-23
+
+### Fixed
+- **Tool calls and tool results now render for a non-token-streaming agent (gh #91).** An agent
+  whose messages are produced without token streaming — a custom node calling `model.invoke()`, a
+  non-streaming provider, a rule-based node (the "Creating Your Own Agent" shape) — delivers its
+  turn via the AG-UI snapshot path, and `langstage-core`'s snapshot handler yielded text only: the
+  `● tool_name` / `↳ result` the CLI renderer already knows how to draw never arrived, and a
+  tool-call-only turn rendered nothing while `--verify`/the exit code reported success. The root
+  cause and fix are in `langstage-core`; this release raises the floor to **>= 1.0.24**, which
+  emits `tool_calls`/`tool_result` on the snapshot wire, so `print_chunk` renders them. (Tool
+  frames remain intentionally suppressed in the quiet/scriptable single-shot path, where stdout
+  carries only the reply text — that "tool chatter" contract from 0.6.20 is unchanged.)
+- **README: `/status` no longer documents a "sync/async mode" field (gh #90).** 0.6.21 removed that
+  line from the runtime (#88) and updated the CLI Options table and the `[ui] async_mode` example,
+  but missed the `/status` entry in the Commands list — so the docs still advertised a field the
+  command hasn't shown since 0.6.21. Corrected to `agent, thread, verbose, cwd`.
+
 ## 0.6.21 - 2026-07-19
 
 ### Changed

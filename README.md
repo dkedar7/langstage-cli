@@ -94,7 +94,7 @@ langstage-cli --show-config
 
 In the interactive loop:
 - `/help` (`/h`, `/?`) - Show this help message, or `/help <command>` for one command
-- `/status` (`/s`) - Show session status (agent, thread, sync/async mode, verbose, cwd)
+- `/status` (`/s`) - Show session status (agent, thread, verbose, cwd)
 - `/version` (`/v`) - Show version and the current agent
 - `/config` (`/cfg`) - Show the resolved configuration, or set a runtime key: `/config [key] [value]`
 - `/verbose` - Toggle verbose output, or set it explicitly: `/verbose [on|off]`
