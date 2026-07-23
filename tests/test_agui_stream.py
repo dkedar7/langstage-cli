@@ -173,8 +173,10 @@ def _snapshot_tool_graph():
     g = StateGraph(MessagesState)
     for n, f in [("call_tool", call_tool), ("run_tool", run_tool), ("final", final)]:
         g.add_node(n, f)
-    g.add_edge(START, "call_tool"); g.add_edge("call_tool", "run_tool")
-    g.add_edge("run_tool", "final"); g.add_edge("final", END)
+    g.add_edge(START, "call_tool")
+    g.add_edge("call_tool", "run_tool")
+    g.add_edge("run_tool", "final")
+    g.add_edge("final", END)
     return g.compile()
 
 
