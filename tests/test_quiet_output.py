@@ -10,6 +10,8 @@ CliRunner's stdout is not a TTY, so ``invoke(main, [...])`` exercises exactly th
 piped path these tests care about.
 """
 
+import re
+
 from click.testing import CliRunner
 
 from langstage_cli import cli as c
@@ -34,6 +36,42 @@ def test_quiet_flag_forces_clean_output(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     assert "ping" in r.output
     assert "\x1b[" not in r.output and "⏺" not in r.output, r.output
+
+
+def test_piped_stdin_quiet_output_matches_the_message_arg_path(tmp_path, monkeypatch):
+    # gh #93: a message on piped stdin (`echo "hi" | langstage-cli --demo -q`) used to
+    # be routed through the interactive REPL, which honored neither -q nor the non-TTY
+    # auto-quiet — so it leaked the `····` separator rules, the `❯` prompt row (with
+    # `\x01\x02` bracketed-paste bytes), the `Nms` timing line, and a trailing `Goodbye!`
+    # around the reply (~380 bytes of chrome). It must now emit exactly what the
+    # MESSAGE-arg quiet path emits: only the agent's reply. CliRunner's stdin and stdout
+    # are both non-TTYs, so `input="hi\n"` with no MESSAGE arg reproduces the piped pipe.
+    monkeypatch.chdir(tmp_path)
+    arg = CliRunner().invoke(main, ["--demo", "-q", "hi"])
+    stdin = CliRunner().invoke(main, ["--demo", "-q"], input="hi\n")
+    assert arg.exit_code == 0 and stdin.exit_code == 0, (arg.output, stdin.output)
+    # Byte-for-byte identical reply streams — the stdin path carries no extra chrome.
+    assert stdin.stdout == arg.stdout, repr((arg.stdout, stdin.stdout))
+    assert stdin.stdout == "(demo agent) You said: hi\n", repr(stdin.stdout)
+    # And none of the specific chrome the issue grepped for reaches the reply stream.
+    assert re.search(r"\d+ms", stdin.stdout) is None, repr(stdin.stdout)  # no timing line
+    assert "·" not in stdin.stdout, repr(stdin.stdout)  # no `····` separator rule
+    assert "❯" not in stdin.stdout, repr(stdin.stdout)  # no prompt row
+    assert "\x01" not in stdin.stdout and "\x02" not in stdin.stdout  # no bracketed-paste bytes
+    assert "Goodbye" not in stdin.stdout, repr(stdin.stdout)  # no trailing farewell
+
+
+def test_piped_stdin_auto_quiets_without_the_quiet_flag(tmp_path, monkeypatch):
+    # gh #93 / #53: the non-TTY auto-quiet must ALSO fire when the message arrives on
+    # stdin, with no -q — `echo "hi" | langstage-cli --demo | tool` is clean by default,
+    # exactly like the MESSAGE-arg auto-quiet. Piped stdin is non-interactive input, so
+    # the run is scriptable even without the explicit flag.
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(main, ["--demo"], input="hi\n")
+    assert r.exit_code == 0, r.output
+    assert r.stdout == "(demo agent) You said: hi\n", repr(r.stdout)
+    assert re.search(r"\d+ms", r.stdout) is None, repr(r.stdout)
+    assert "·" not in r.stdout and "❯" not in r.stdout and "Goodbye" not in r.stdout
 
 
 def test_make_prompt_uses_disabled_color_globals_after_ansi_is_disabled():

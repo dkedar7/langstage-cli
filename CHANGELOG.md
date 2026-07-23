@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.23 - 2026-07-23
+
+### Fixed
+- **`-q/--quiet` and the non-TTY auto-quiet now apply when the message arrives on piped
+  stdin (gh #93).** `-q` is documented to suppress the header, spinner, tool chatter,
+  timing, and color and emit only the agent's reply, and #53 wired the same auto-quiet
+  for a non-TTY stdout so a piped run is clean without any flag. That contract held for a
+  single-shot run — a `MESSAGE` arg or `-f/--file` — but not for the most idiomatic pipe
+  form, `echo "hi" | langstage-cli --demo -q`: a stdin message is read by the interactive
+  loop, which honored neither `-q` nor the `stdout.isatty()==False` gating, so it still
+  emitted the `····` separator rules, the `❯` prompt row (with `\x01\x02` bracketed-paste
+  bytes), the `Nms` timing line, and a trailing `Goodbye!` — ~380 bytes of chrome around a
+  25-byte reply. Two root causes: (1) the auto-quiet formula keyed only off a `MESSAGE`/
+  `-f`/`--verify` single-shot, so a stdin-fed run never triggered it; and (2) the
+  interactive loop applied no quiet gating at all. Both are fixed. The auto-quiet gate is
+  now "stdout is not a TTY **and** the input is non-interactive" — a single-shot arg/file/
+  verify **or** piped (non-TTY) stdin — and the conversation loop suppresses its
+  separators, prompt, timing line and `Goodbye!` under `_QUIET`, so a piped message
+  produces byte-identical output to the `-q "msg"` arg path (only the reply). The
+  interactive-loop path is kept (not rerouted to single-shot) deliberately: piped stdin
+  can still carry multiple lines and slash commands — `printf 'hi\nbye\n' | langstage-cli`
+  runs two clean turns, and `echo /config | langstage-cli` still drives the command — each
+  turn now just renders on the scriptable path. A live terminal session (stdin **is** a
+  tty, no `-q`) is unchanged: it keeps its header, separators, prompt, timing and farewell.
+
 ## 0.6.22 - 2026-07-23
 
 ### Fixed

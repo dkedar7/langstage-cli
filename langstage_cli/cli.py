@@ -1507,11 +1507,22 @@ def run_conversation_loop(
         if single_shot:
             return had_error
 
-    # Main conversation loop
+    # Main conversation loop.
+    #
+    # This loop also consumes a message on piped (non-TTY) stdin — `echo "hi" |
+    # langstage-cli` reads the line via input() and runs one turn, then EOF ends the
+    # loop. That path is scriptable, not an interactive session, so when _QUIET is
+    # set (via -q or the non-TTY auto-quiet above) every decorative element is
+    # suppressed: the `····` separators, the `❯` prompt (input() with no prompt, so
+    # no glyph and no bracketed-paste bytes), the `Nms` timing line, and the
+    # `Goodbye!`. What reaches stdout is then exactly the reply the MESSAGE-arg path
+    # emits. A real TTY session has _QUIET == False, so all of it renders unchanged.
+    # (gh #93)
     while True:
         try:
-            print(separator("dots"))
-            user_input = input(make_prompt()).strip()
+            if not _QUIET:
+                print(separator("dots"))
+            user_input = input("" if _QUIET else make_prompt()).strip()
 
             if not user_input:
                 continue
@@ -1565,22 +1576,32 @@ def run_conversation_loop(
             if user_input.lower() == "exit":
                 break
 
-            print()  # Space before response
+            if not _QUIET:
+                print()  # Space before response
 
             # Run the agent (AG-UI is the only streaming path since langstage-core 1.0)
             duration, _ = asyncio.run(
                 run_single_turn_agui(agui_agent, user_input, thread_id, interactive, verbose)
             )
-            print_timing(duration, verbose)
-            print()
+            if _QUIET:
+                # Scriptable path (gh #93): cap the streamed reply with a single
+                # newline and emit no `Nms` timing line — exactly what the quiet
+                # MESSAGE-arg single-shot path does, so a piped one-liner produces
+                # byte-identical output whether the message is an arg or on stdin.
+                print()
+            else:
+                print_timing(duration, verbose)
+                print()
 
         except (EOFError, KeyboardInterrupt):
             break
         except Exception as err:
             print(f"\n{RED}✗ Error: {err}{RESET}\n")
 
-    # Print goodbye message
-    print_goodbye()
+    # Print goodbye message (interactive chrome — omitted on the scriptable/quiet
+    # path so a piped consumer never sees a trailing `Goodbye!`, gh #93).
+    if not _QUIET:
+        print_goodbye()
 
 
 @click.command()
@@ -1738,14 +1759,22 @@ def main(
         except (AttributeError, ValueError):  # non-reconfigurable stream
             pass
 
-    # Scriptable output (gh #53). A single-shot run (a MESSAGE arg or -f/--file) or
-    # a --verify preflight that is piped — stdout is not a TTY — auto-enables quiet
-    # so the consumer gets only the reply/verdict (no spinner or "Loaded" line);
-    # --quiet forces it in a terminal. Color is additionally stripped whenever stdout
-    # is not a TTY, matching well-behaved CLIs.
+    # Scriptable output (gh #53, gh #93). Auto-enable quiet when stdout is not a TTY
+    # AND the run is non-interactive input: an explicit single-shot (a MESSAGE arg,
+    # -f/--file, or a --verify preflight) OR a message on piped stdin
+    # (`echo "hi" | langstage-cli`). Piped stdin is non-interactive input — it is
+    # scriptable too, so it must not leak the REPL's `····` rules, the `❯` prompt
+    # (with bracketed-paste bytes), the `Nms` timing line or a trailing `Goodbye!`.
+    # The gate is `stdin is not a tty`, so a LIVE terminal session (a human typing,
+    # stdin IS a tty, no single-shot input) is never auto-quieted and its interactive
+    # UX is unchanged; --quiet still forces quiet anywhere. Color is additionally
+    # stripped whenever stdout is not a TTY, matching well-behaved CLIs.
     _is_tty = _is_a_tty(sys.stdout)
+    _stdin_is_tty = _is_a_tty(sys.stdin)
     global _QUIET
-    _QUIET = quiet or ((bool(message or prompt_file) or verify_agent) and not _is_tty)
+    _QUIET = quiet or (
+        (bool(message or prompt_file) or verify_agent or not _stdin_is_tty) and not _is_tty
+    )
     if _QUIET or not _is_tty:
         _disable_ansi()
 
