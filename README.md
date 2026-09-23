@@ -132,6 +132,12 @@ Persistence is on by default — disable it with `--no-persist`, `LANGSTAGE_PERS
 checkpointer keeps it (yours always wins); the CLI only supplies a durable one when your
 graph has none. A pinned `[configurable] thread_id` now genuinely persists across runs.
 
+`--continue` / `--resume` imply persistence over `LANGSTAGE_PERSIST` / `[session] persist`
+(a CLI flag outranks them), but an explicit `--no-persist` on the same command line wins:
+`langstage-cli --no-persist -c "..."` resumes the session **read-only** — the run sees the
+prior conversation, but nothing is written back (no new turns, no index update, and no
+store is created if none exists).
+
 ## Commands
 
 In the interactive loop:

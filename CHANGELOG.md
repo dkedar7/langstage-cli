@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.31 - 2026-09-23
+
+### Security
+- **The HITL approval prompt now shows EVERY argument of the action being approved, not
+  just the first value (gh #146).** `format_interrupt_request` previewed a tool-review
+  `ActionRequest` with `get_tool_arg_preview` — the compact streaming preview, which returns
+  only the first arg *value* — so approving `transfer_funds(to, amount, confirm)` showed
+  `└─ alice` and hid `amount=1000000` / `confirm=True` (and every arg name). The approval
+  path now renders all args as `name=value` (each value capped at 80 chars, never dropped;
+  one field per line when the row would be long). Non-printable characters in a value
+  (newlines, ANSI escapes) are shown escaped, so a tool arg can't break out of its line and
+  forge prompt text above the Approve/Reject menu. The compact one-value preview on the
+  streaming tool-call render is unchanged.
+- **An `action` / `tool` label on a generic `interrupt({...})` no longer hides the rest of
+  the payload (gh #159).** The label routed the dict to the ActionRequest branch, which read
+  only `args` — so `interrupt({"action": "delete_file", "path": "/etc/passwd"})` asked the
+  user to approve a bare `delete_file`, while the same dict *without* the label rendered in
+  full. Every sibling field is now shown alongside the label (and alongside `args` when
+  both are present). The same rule now applies to a `description` / `question` /
+  `message` / `prompt` headline (its sibling fields are listed under it), and a label-less
+  dict too long for the one-line JSON repr lists every field instead of being cut off
+  mid-payload. Resume semantics (#99) are unchanged.
+
+### Fixed
+- **`--no-persist` is honored with `--continue` / `--resume`: the session resumes
+  read-only (gh #147).** `--continue` / `--resume` forced persistence on unconditionally,
+  so an explicit `--no-persist` on the same command line was silently dropped — the
+  "don't save this" turn was written to the durable store, indexed, and resumable later
+  (and on a fresh workspace, the store was created). Now the explicit flag wins: the run
+  reads the prior session from a throwaway snapshot of the store (so it sees the full
+  checkpoint, including a pending interrupt), prints `resuming session <id> read-only —
+  this run will not be saved`, and writes nothing back — no appended turns, no index
+  update, no store created. With nothing to resume it's a plain ephemeral run. Only the
+  explicit CLI flag has this effect: `LANGSTAGE_PERSIST=0` / `[session] persist = false`
+  are lower-precedence than the `--continue` / `--resume` CLI flags, which still imply
+  persistence over them. Documented in the README and `--help`; `/status` reports
+  `Persist: off (--no-persist: read-only resume, nothing saved)`.
+
 ## 0.6.30 - 2026-08-08
 
 ### Fixed
