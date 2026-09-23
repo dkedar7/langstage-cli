@@ -829,25 +829,29 @@ def format_interrupt_request(action: Any) -> Tuple[str, str]:
       every field in the preview) — instead of the old, content-dropping ``unknown``;
     - a bare string / scalar -> the value itself (a ``.get`` on it used to raise).
 
+    Every agent-supplied string — the label (tool name, question text, bare string)
+    as well as each field name and value — is escaped the same way, so none of them
+    can inject a newline / ANSI escape that forges prompt lines.
+
     The preview may span several lines (``\n``-joined); the caller indents them.
     """
     if isinstance(action, dict):
         for key in ("action", "tool"):
             tool = action.get(key)
             if tool:
-                return str(tool), _approval_fields(action, skip=(key,))
+                return _approval_text(tool, None), _approval_fields(action, skip=(key,))
         for key in _INTERRUPT_LABEL_KEYS:
             val = action.get(key)
             if isinstance(val, str) and val.strip():
-                return val, _approval_fields(action, skip=(key,))
+                return _approval_text(val, None), _approval_fields(action, skip=(key,))
         # No recognized field — surface the payload compactly, never "unknown". If the
         # one-line repr would be cut off (hiding later keys), list every field instead
         # (an uncut dict repr always ends in "}", so a "..." tail means it was capped).
         compact = _compact_repr(action)
         if not compact.endswith("..."):
-            return compact, ""
+            return _approval_text(compact, None), ""
         return "Approval requested", _approval_fields(action, skip=())
-    return str(action), ""
+    return _approval_text(action, None), ""
 
 
 def _print_approval_preview(preview: str) -> None:

@@ -132,3 +132,39 @@ def test_no_args_no_siblings_has_empty_preview():
 def test_description_only_and_scalar_unchanged():
     assert format_interrupt_request({"description": "Approve?"}) == ("Approve?", "")
     assert format_interrupt_request("What is your name?") == ("What is your name?", "")
+
+
+# ---- labels are agent-supplied too: same escaping as values ----
+
+_FAKE = "delete_file\nApprove? [y/N] y\x1b[2K"
+
+
+def _assert_escaped(text: str) -> None:
+    assert "\n" not in text and "\x1b" not in text, repr(text)
+    assert "\\n" in text and "\\x1b" in text, repr(text)
+
+
+def test_tool_name_label_is_escaped():
+    _assert_escaped(format_interrupt_request({"action": _FAKE, "args": {}})[0])
+    _assert_escaped(format_interrupt_request({"tool": _FAKE})[0])
+
+
+def test_question_and_description_labels_are_escaped():
+    for key in ("question", "description", "message", "prompt"):
+        _assert_escaped(format_interrupt_request({key: _FAKE})[0])
+
+
+def test_bare_string_label_is_escaped():
+    _assert_escaped(format_interrupt_request(_FAKE)[0])
+
+
+def test_arg_names_are_escaped():
+    _, preview = format_interrupt_request({"action": "x", "args": {_FAKE: 1}})
+    _assert_escaped(preview)
+
+
+def test_spoofed_label_cannot_forge_a_prompt_line(capsys):
+    out = _render([{"question": _FAKE}], capsys)
+    assert "\x1b[2K" not in out
+    # The fake approval text stays on the numbered label line; no line starts with it.
+    assert not any(line.startswith("Approve?") for line in out.splitlines()), out

@@ -22,6 +22,12 @@
   `message` / `prompt` headline (its sibling fields are listed under it), and a label-less
   dict too long for the one-line JSON repr lists every field instead of being cut off
   mid-payload. Resume semantics (#99) are unchanged.
+- **Agent-supplied labels in the HITL prompt are escaped too.** The tool name, the
+  `question` / `description` / `message` / `prompt` headline, a bare-string
+  `interrupt("...")`, and every field name now go through the same escaping as argument
+  values, so a label carrying a newline + a fake `Approve? [y/N]` line or an ANSI escape
+  (e.g. `\x1b[2K` to erase a line) can no longer forge prompt text. A multi-line question
+  now renders on one line with a visible `\n`.
 
 ### Fixed
 - **`--no-persist` is honored with `--continue` / `--resume`: the session resumes
