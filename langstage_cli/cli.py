@@ -758,32 +758,107 @@ def get_tool_arg_preview(args: Dict[str, Any]) -> str:
     return first_val
 
 
+# Per-value cap for the HITL approval preview. Values are truncated, never dropped: the
+# user must see EVERY field they approve (gh #146, #159), just not a 5 KB file body inline.
+_APPROVAL_VALUE_MAX = 80
+# Above this total width the fields go one per line instead of a single comma-joined row.
+_APPROVAL_LINE_MAX = 100
+# Human-readable fields a generic interrupt dict may use as its headline (gh #82).
+_INTERRUPT_LABEL_KEYS = ("description", "question", "message", "prompt")
+
+
+def _approval_text(value: Any, limit: Optional[int] = _APPROVAL_VALUE_MAX) -> str:
+    """One field of the approval preview as a single, escaped, length-capped line.
+
+    Non-printable characters (newlines, ANSI escapes) are shown escaped, so a tool arg
+    can't break out of its line and forge prompt text above the Approve/Reject menu.
+    """
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, (dict, list, tuple)):
+        try:
+            text = json.dumps(value, default=str, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(value)
+    else:
+        text = str(value)
+    text = "".join(ch if ch.isprintable() else repr(ch)[1:-1] for ch in text)
+    if limit is not None and len(text) > limit:
+        return text[:limit] + "..."
+    return text
+
+
+def _approval_fields(action: Dict[str, Any], skip: Tuple[str, ...]) -> str:
+    """Every field of an interrupt dict (minus the ``skip`` headline keys) as ``k=v``.
+
+    An ``args`` dict is flattened into its own ``k=v`` pairs (the ActionRequest payload,
+    gh #146); every other top-level key is shown too (gh #159). Pairs are kept as a list,
+    not a dict, so an arg and a sibling sharing a name can't shadow each other.
+    """
+    pairs: List[Tuple[Any, Any]] = []
+    for key, val in action.items():
+        if key in skip:
+            continue
+        if key == "args" and isinstance(val, dict):
+            pairs.extend(val.items())
+        elif key == "args" and val in (None, "", [], ()):
+            continue
+        else:
+            pairs.append((key, val))
+    parts = [f"{_approval_text(k, None)}={_approval_text(v)}" for k, v in pairs]
+    joined = ", ".join(parts)
+    return joined if len(joined) <= _APPROVAL_LINE_MAX else "\n".join(parts)
+
+
 def format_interrupt_request(action: Any) -> Tuple[str, str]:
     """Render one HITL interrupt ``action_request`` to a ``(label, preview)`` pair.
 
     A generic LangGraph ``interrupt(...)`` may carry ANY value, not just a
     deepagents ``ActionRequest``. The renderer must never ask the user to approve
-    an action whose description it silently threw away (gh #82):
+    an action whose description it silently threw away (gh #82), so the preview
+    lists EVERY field being approved as ``name=value`` (each value capped, never
+    dropped; one per line when long):
 
     - a deepagents/langchain ``ActionRequest`` (tool name under ``action`` — the
-      convention #69 fixed — or the legacy ``tool`` key) -> tool name + first-arg
-      preview, unchanged;
+      convention #69 fixed — or the legacy ``tool`` key) -> tool name + all of its
+      ``args`` (not just the first value, gh #146) + any sibling fields (an
+      ``action`` label on a generic dict must not hide the rest of it, gh #159);
     - any other dict -> its first human-readable field
-      (``description``/``question``/``message``/``prompt``), else a compact JSON
-      repr of the whole payload — instead of the old, content-dropping ``unknown``;
+      (``description``/``question``/``message``/``prompt``) + the remaining fields,
+      else a compact JSON repr of the whole payload (or, if that would be cut off,
+      every field in the preview) — instead of the old, content-dropping ``unknown``;
     - a bare string / scalar -> the value itself (a ``.get`` on it used to raise).
+
+    Every agent-supplied string — the label (tool name, question text, bare string)
+    as well as each field name and value — is escaped the same way, so none of them
+    can inject a newline / ANSI escape that forges prompt lines.
+
+    The preview may span several lines (``\n``-joined); the caller indents them.
     """
     if isinstance(action, dict):
-        tool = action.get("action") or action.get("tool")
-        if tool:
-            return str(tool), get_tool_arg_preview(action.get("args", {}))
-        for key in ("description", "question", "message", "prompt"):
+        for key in ("action", "tool"):
+            tool = action.get(key)
+            if tool:
+                return _approval_text(tool, None), _approval_fields(action, skip=(key,))
+        for key in _INTERRUPT_LABEL_KEYS:
             val = action.get(key)
             if isinstance(val, str) and val.strip():
-                return val, ""
-        # No recognized field — surface the payload compactly, never "unknown".
-        return _compact_repr(action), ""
-    return str(action), ""
+                return _approval_text(val, None), _approval_fields(action, skip=(key,))
+        # No recognized field — surface the payload compactly, never "unknown". If the
+        # one-line repr would be cut off (hiding later keys), list every field instead
+        # (an uncut dict repr always ends in "}", so a "..." tail means it was capped).
+        compact = _compact_repr(action)
+        if not compact.endswith("..."):
+            return _approval_text(compact, None), ""
+        return "Approval requested", _approval_fields(action, skip=())
+    return _approval_text(action, None), ""
+
+
+def _print_approval_preview(preview: str) -> None:
+    """Print an approval preview under its label; a multi-line preview (one field per
+    line, gh #146) keeps every line aligned under the ``└─``."""
+    for n, line in enumerate(preview.split("\n") if preview else []):
+        print(f"     {DIM}{'└─' if n == 0 else '  '} {line}{RESET}")
 
 
 def _compact_repr(value: Any) -> str:
@@ -958,8 +1033,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 # payload actionably (gh #82); the structured tool path is unchanged.
                 label, args_preview = format_interrupt_request(action)
                 print(f"  {DIM}{i + 1}. {label}{RESET}")
-                if args_preview:
-                    print(f"     {DIM}└─ {args_preview}{RESET}")
+                _print_approval_preview(args_preview)
         else:
             # No structured action_requests. A bare-string/scalar interrupt loses its
             # payload upstream (core's AG-UI adapter JSON-decodes it to `{}`), but if a
@@ -971,8 +1045,9 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             if raw in (None, "", {}, []):
                 print(f"  {DIM}(no action details provided){RESET}")
             else:
-                label, _ = format_interrupt_request(raw)
+                label, args_preview = format_interrupt_request(raw)
                 print(f"  {DIM}{label}{RESET}")
+                _print_approval_preview(args_preview)
 
     elif status == "complete":
         print_chunk._streaming_text = False  # turn over; next turn starts a fresh marker
@@ -1294,6 +1369,8 @@ def cmd_status(args: str, context: Dict[str, Any]) -> Optional[str]:
         print(f"  {DIM}Persist:{RESET}     on ({'durable' if durable else 'graph checkpointer'})")
         if session_info.get("store"):
             print(f"  {DIM}Store:{RESET}       {session_info['store']}")
+    elif isinstance(session_info, dict) and session_info.get("read_only"):
+        print(f"  {DIM}Persist:{RESET}     off (--no-persist: read-only resume, nothing saved)")
     print()
     return None
 
@@ -1457,11 +1534,8 @@ def cmd_history(args: str, context: Dict[str, Any]) -> Optional[str]:
     # through the async saver on its own loop (gh #106) instead of the sync get_state,
     # which can't drive the closed AsyncSqliteSaver.
     session_info = config.get("_session_info") if isinstance(config, dict) else None
-    store_path = (
-        session_info.get("store")
-        if isinstance(session_info, dict) and session_info.get("persist")
-        else None
-    )
+    # (A read-only resume, gh #147, has a store too — its throwaway snapshot.)
+    store_path = session_info.get("store") if isinstance(session_info, dict) else None
 
     try:
         # Prefer the async read on the durable store; otherwise the sync path still works
@@ -2025,12 +2099,70 @@ def scaffold_init(target_dir: Path, force: bool = False) -> int:
     return 0
 
 
+def _resolve_resume_thread(
+    workspace: Path, continue_session: bool, resume_id: Optional[str]
+) -> Optional[str]:
+    """The thread ``--continue`` / ``--resume <id>`` targets, or ``None`` for a fresh one.
+
+    ``--continue`` with nothing to continue notes it and starts fresh; an unknown
+    ``--resume`` id is an error (exit 1).
+    """
+    if continue_session:
+        thread = sessions.most_recent_thread(workspace)
+        if thread is None:
+            _status(f"{DIM}⏺ No prior session for this workspace — starting a fresh one.{RESET}")
+        return thread
+    if resume_id is not None:
+        thread = sessions.resolve_thread(workspace, resume_id)
+        if thread is None:
+            _status(f"{RED}⏺ Error: no session matching '{resume_id}' for this workspace.{RESET}")
+            _status(f"{DIM}Run --list-sessions to see available sessions.{RESET}")
+            sys.exit(1)
+        return thread
+    return None
+
+
+def _snapshot_session_store(workspace: Path) -> Optional[Path]:
+    """Copy the workspace's durable store to a throwaway temp file for a read-only
+    resume (``--no-persist`` + ``--continue`` / ``--resume``, gh #147).
+
+    The turn runs against the COPY, so it sees the full prior checkpoint (including a
+    pending interrupt) while the real store is never written. The copy is removed at
+    exit. Returns ``None`` if there is no store to read (nothing to resume from).
+    """
+    import atexit
+    import shutil
+    import sqlite3
+    import tempfile
+
+    src = sessions.sessions_dir() / f"{sessions.workspace_key(workspace)}.sqlite"
+    if not src.is_file():
+        return None
+    tmp_dir = Path(tempfile.mkdtemp(prefix="langstage-readonly-"))
+    atexit.register(shutil.rmtree, tmp_dir, ignore_errors=True)
+    dst = tmp_dir / "session.sqlite"
+    # sqlite's online backup: a consistent copy even with a WAL sidecar present, and it
+    # only READS the source.
+    src_conn = sqlite3.connect(f"{src.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        dst_conn = sqlite3.connect(dst)
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+    finally:
+        src_conn.close()
+    return dst
+
+
 def _resolve_persist(flag: Optional[bool], toml_config: dict) -> bool:
     """Resolve whether to persist this session: ``--persist/--no-persist`` flag >
     ``LANGSTAGE_PERSIST`` env > ``[session] persist`` TOML > default ON (gh #102).
 
     Default-on is what makes ``--continue`` useful: a fresh run leaves a session behind
-    to resume. ``--continue`` / ``--resume`` force it on regardless (handled by caller).
+    to resume. ``--continue`` / ``--resume`` force it on over the env/TOML layers, except
+    against an explicit ``--no-persist``, which makes the resume read-only (gh #147) —
+    both handled by the caller.
     """
     if flag is not None:
         return flag
@@ -2248,7 +2380,8 @@ def _print_sessions(workspace: Path) -> None:
     "persist",
     default=None,
     help="Persist this session to a durable store so it can be continued later "
-    "(default: on; also LANGSTAGE_PERSIST / [session] persist in langstage.toml).",
+    "(default: on; also LANGSTAGE_PERSIST / [session] persist in langstage.toml). "
+    "With --continue/--resume, --no-persist resumes read-only (nothing is saved).",
 )
 @click.option(
     "--force",
@@ -2484,10 +2617,14 @@ def main(
 
         # Persistence is on by default so a fresh run can be continued later; disable via
         # --no-persist / LANGSTAGE_PERSIST=0 / [session] persist=false. --continue and
-        # --resume always imply it.
+        # --resume imply it over the env/TOML layers (a CLI arg outranks them) — but an
+        # explicit --no-persist on the same command line wins (gh #147): the session is
+        # resumed READ-ONLY (prior context is read, nothing is written back).
         persist_flag = persist  # raw --persist/--no-persist (None if unset), for the diagnostic
         persist = _resolve_persist(persist, toml_config)
-        if continue_session or resume_id is not None:
+        resuming = continue_session or resume_id is not None
+        read_only_resume = resuming and persist_flag is False
+        if resuming and not read_only_resume:
             persist = True
 
         # If no spec provided, try the default agent
@@ -2542,7 +2679,7 @@ def main(
             final_spec, final_graph_name_default, attach_default_checkpointer=False
         )
         had_user_checkpointer = getattr(graph, "checkpointer", None) is not None
-        use_durable = persist and not had_user_checkpointer
+        use_durable = (persist or read_only_resume) and not had_user_checkpointer
         if not use_durable:
             _ensure_checkpointer(graph)
         if loading:
@@ -2597,22 +2734,31 @@ def main(
         persist_sqlite_path: Optional[Path] = None
         session_thread: Optional[str] = None
         on_turn = None
-        if persist:
-            if continue_session:
-                session_thread = sessions.most_recent_thread(workspace)
-                if session_thread is None:
-                    _status(
-                        f"{DIM}⏺ No prior session for this workspace — starting a fresh one.{RESET}"
-                    )
-            elif resume_id is not None:
-                session_thread = sessions.resolve_thread(workspace, resume_id)
-                if session_thread is None:
-                    _status(
-                        f"{RED}⏺ Error: no session matching '{resume_id}' "
-                        f"for this workspace.{RESET}"
-                    )
-                    _status(f"{DIM}Run --list-sessions to see available sessions.{RESET}")
-                    sys.exit(1)
+        if read_only_resume:
+            session_thread = _resolve_resume_thread(workspace, continue_session, resume_id)
+            persist_sqlite_path = None
+            if session_thread is not None:
+                config_dict["configurable"]["thread_id"] = session_thread
+                if use_durable:
+                    persist_sqlite_path = _snapshot_session_store(workspace)
+                _status(
+                    f"{DIM}⏺ --no-persist: resuming session {session_thread[:8]} read-only — "
+                    f"this run will not be saved.{RESET}"
+                )
+            if persist_sqlite_path is None and use_durable:
+                # Nothing to read (no prior session / no store): a plain ephemeral run,
+                # exactly like --no-persist without --continue.
+                _ensure_checkpointer(graph)
+            # No record_session / touch_session / on_turn: the index is never touched.
+            config_dict["_session_info"] = {
+                "persist": False,
+                "read_only": True,
+                "durable": persist_sqlite_path is not None,
+                "store": str(persist_sqlite_path) if persist_sqlite_path else None,
+                "thread": session_thread,
+            }
+        elif persist:
+            session_thread = _resolve_resume_thread(workspace, continue_session, resume_id)
             if session_thread is None:
                 # Fresh persisted session: honour a pinned [configurable] thread_id if the
                 # user set one (now it actually persists across runs — closing the "I
