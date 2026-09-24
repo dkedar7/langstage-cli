@@ -11,6 +11,11 @@ lifecycle, and the terminal markdown render. Each fix has a regression test.
   prompt became several turns, and a line such as `/quit` or `/clear` ran as a command.
   Now all of stdin is read and sent as one turn, the same as `-f`. A live terminal still
   gets the REPL. Empty stdin is an error (`no message on stdin`), not a silent no-op.
+  On Windows, a mintty / Git Bash terminal counts as a terminal: its stdin is a pipe
+  (`isatty()` is False), so the CLI checks the pipe's name for an MSYS / Cygwin pty.
+  A real pipe (`echo hi | langstage-cli`) is still single-shot. `<NUL` / `</dev/null`
+  is now treated as empty stdin, not a terminal. `isatty()` is True for `NUL`, so the
+  CLI checks for a real console.
 - **An explicit empty `MESSAGE` is an error, not "no message" (gh #123).**
   `langstage-cli -a agent.py "$MSG"` with an empty `$MSG` started the REPL even with
   `--no-interactive`, then hung on an open stdin or exited 0 without running a turn. It

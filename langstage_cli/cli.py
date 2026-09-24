@@ -75,6 +75,79 @@ def _is_a_tty(stream) -> bool:
         return False
 
 
+# The pipe names MSYS2 / Cygwin terminals (mintty, Git Bash) give a pty on Windows.
+_MSYS_PTY_RE = re.compile(r"\\(cygwin|msys)-[0-9a-f]+-pty[0-9]+-(from|to)-master")
+
+
+def _is_msys_pty_name(name: str) -> bool:
+    """True when a Windows handle's file name is an MSYS2 / Cygwin pty pipe."""
+    return bool(_MSYS_PTY_RE.search(name))
+
+
+def _win_handle_name(stream) -> Optional[str]:
+    """The file name behind ``stream``'s Windows handle, or ``None`` if unknowable.
+
+    ``GetFileInformationByHandleEx(FileNameInfo)``. A mintty pty is a named pipe such as
+    ``\\msys-1888ae32e00d56aa-pty0-from-master``.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        size = 4 + 2 * 1024  # DWORD FileNameLength + WCHAR FileName[]
+        buf = ctypes.create_string_buffer(size)
+        fn = ctypes.windll.kernel32.GetFileInformationByHandleEx
+        fn.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        fn.restype = wintypes.BOOL
+        if not fn(handle, 2, buf, size):  # 2 = FileNameInfo
+            return None
+        length = int.from_bytes(buf.raw[:4], "little")
+        return buf.raw[4 : 4 + length].decode("utf-16-le", errors="replace")
+    except Exception:  # no fileno, no ctypes, a closed handle: unknowable
+        return None
+
+
+def _win_is_console(stream) -> Optional[bool]:
+    """Whether ``stream``'s handle is a real console, or ``None`` if unknowable.
+
+    ``NUL`` is a character device, so ``isatty()`` is True for ``<NUL`` and
+    ``</dev/null``. ``GetConsoleMode`` fails on it.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        mode = wintypes.DWORD()
+        fn = ctypes.windll.kernel32.GetConsoleMode
+        fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        fn.restype = wintypes.BOOL
+        return bool(fn(handle, ctypes.byref(mode)))
+    except Exception:
+        return None
+
+
+def _stdin_is_interactive(stream=None) -> bool:
+    """Whether a human is typing on stdin: a terminal, not a pipe, file or ``NUL``.
+
+    On POSIX this is ``isatty()``. On Windows two cases need more than ``isatty()``:
+    a mintty / Git Bash terminal is a pipe (``isatty()`` False) with an MSYS pty
+    name, so it counts as interactive, and ``NUL`` (``isatty()`` True) doesn't.
+    A real pipe (``echo hi | langstage-cli``) is never interactive. If the Windows
+    checks can't run, the ``isatty()`` answer stands.
+    """
+    stream = sys.stdin if stream is None else stream
+    tty = _is_a_tty(stream)
+    if not IS_WINDOWS:
+        return tty
+    if tty:
+        console = _win_is_console(stream)
+        return tty if console is None else console
+    name = _win_handle_name(stream)
+    return name is not None and _is_msys_pty_name(name)
+
+
 def _disable_ansi() -> None:
     """Blank every ANSI constant so nothing colorized reaches a pipe or file.
 
@@ -2302,12 +2375,13 @@ def _snapshot_session_store(workspace: Path) -> Optional[Path]:
 
 
 def _read_piped_stdin() -> Optional[str]:
-    """All of stdin, stripped, when it is piped or redirected; ``None`` on a terminal.
+    """All of stdin, stripped, when it is piped or redirected; ``None`` on a terminal
+    (including a mintty / Git Bash terminal on Windows).
 
     ``None`` means "run the interactive REPL". Tests replace this function to drive the
     REPL through CliRunner, whose stdin is never a terminal.
     """
-    if _is_a_tty(sys.stdin):
+    if _stdin_is_interactive():
         return None
     try:
         return sys.stdin.read().strip()
@@ -2645,7 +2719,7 @@ def main(
     # UX is unchanged; --quiet still forces quiet anywhere. Color is additionally
     # stripped whenever stdout is not a TTY, matching well-behaved CLIs.
     _is_tty = _is_a_tty(sys.stdout)
-    _stdin_is_tty = _is_a_tty(sys.stdin)
+    _stdin_is_tty = _stdin_is_interactive()  # a mintty pty counts; NUL doesn't
     global _QUIET
     _QUIET = quiet or (
         (bool(message or prompt_file) or verify_agent or not _stdin_is_tty) and not _is_tty
