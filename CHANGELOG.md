@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.6.33 - 2026-09-24
+
+Surface-local correctness: single-shot input, the thread a turn runs on, the session
+lifecycle, and the terminal markdown render. Each fix has a regression test.
+
+### Fixed
+- **Piped stdin is one single-shot message (gh #127).** With no `MESSAGE` and no `-f`,
+  `cat prompt.txt | langstage-cli` fed stdin to the REPL one line at a time. A multi-line
+  prompt became several turns, and a line such as `/quit` or `/clear` ran as a command.
+  Now all of stdin is read and sent as one turn, the same as `-f`. A live terminal still
+  gets the REPL. Empty stdin is an error (`no message on stdin`), not a silent no-op.
+- **An explicit empty `MESSAGE` is an error, not "no message" (gh #123).**
+  `langstage-cli -a agent.py "$MSG"` with an empty `$MSG` started the REPL even with
+  `--no-interactive`, then hung on an open stdin or exited 0 without running a turn. It
+  now exits 1 with `MESSAGE is empty`, the same as an empty `-f` file. A whitespace-only
+  message is empty too.
+- **`/clear` and `/reset` start a fresh thread for the next turn (gh #139).** They set a
+  new thread id, and `/status` showed it, but the loop had read the id once at startup,
+  so every later turn ran on the old thread with its full history. The thread id is now
+  read on each turn. With persistence on, the post-clear thread is its own session, so
+  `-c` resumes it.
+- **Opening the CLI and quitting leaves no empty session behind (gh #150).** A session was
+  recorded when the REPL started, so open-and-quit left a `(no message yet)` session. It
+  was the newest, so the next `-c` resumed it instead of the real conversation. A session
+  is now recorded by its first turn. The turn is recorded before it runs, so `-c` still
+  finds a session whose first turn failed.
+- **`LANGSTAGE_PERSIST` with an unrecognized value no longer turns persistence off
+  (gh #151).** Any value outside `1/true/yes/on` meant "off", so `LANGSTAGE_PERSIST=enabled`
+  disabled persistence, and `--show-config` credited `[env:LANGSTAGE_PERSIST]`. It now uses
+  core's strict boolean rules: an unrecognized value prints the standard
+  `note: ignoring malformed LANGSTAGE_PERSIST=...` line, and `[session] persist` or the
+  default (on) decides.
+- **The terminal markdown render is a small tokenizer instead of four layered regexes
+  (gh #155, #156, #157, #161).** Fixes:
+  - A `* item` bullet and `5 * 3` are no longer taken as italics. The bullet markers and
+    `*` signs used to be deleted. Emphasis needs a non-space inside each delimiter, and it
+    never spans lines.
+  - Code spans are literal. `` `**kwargs` `` and `` `[a](b)` `` used to be styled, and the
+    link case printed a broken escape (a literal `36m`).
+  - Fenced code blocks (```` ``` ```` and `~~~`) render as blocks. The fence lines are
+    dimmed, and the body is shown verbatim in the code color. Before, the fence was split
+    into stray backticks and one colored inline span.
+  - Nested emphasis keeps the outer style. In `**Important: *do not* delete**`, ` delete`
+    is bold again. Also, `\*` is a literal `*`, and a link URL with parentheses
+    (`.../Merge_sort_(algorithm)`) no longer leaves a stray `)`.
+
+### Changed
+- The REPL is no longer reachable through piped stdin (see gh #127 above). Tests that
+  drive REPL commands through CliRunner use the new `repl_via_stdin` fixture.
+
 ## 0.6.32 - 2026-09-24
 
 Adopts langstage-core 1.0.36 (floor raised from 1.0.28). Most of these fixes come from core,
