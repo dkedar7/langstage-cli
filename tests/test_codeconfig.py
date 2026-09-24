@@ -55,8 +55,9 @@ def test_async_mode_toml_is_deprecated_and_ignored(isolated, tmp_path):
     cfg = CodeConfig.resolve(env={}, toml_start=tmp_path)
     assert cfg.async_mode is False  # default, TOML not applied
     assert cfg.sources["async_mode"] == "default"
-    # ...and the rest of the file still resolves normally.
-    assert cfg.agent_spec == "a.py:g"
+    # ...and the rest of the file still resolves normally (a relative file spec from a
+    # toml resolves against that toml's directory — langstage-core 1.0.36, gh #116).
+    assert cfg.agent_spec == f"{tmp_path / 'a.py'}:g"
 
 
 def test_toml_keys(isolated, tmp_path):
@@ -65,7 +66,7 @@ def test_toml_keys(isolated, tmp_path):
         '[agent]\nspec = "a.py:g"\ngraph_name = "myg"\n[ui]\nverbose = true\n',
     )
     cfg = CodeConfig.resolve(env={}, toml_start=tmp_path)
-    assert cfg.agent_spec == "a.py:g"
+    assert cfg.agent_spec == f"{tmp_path / 'a.py'}:g"  # toml-relative (core 1.0.36)
     assert cfg.graph_name == "myg"
     assert cfg.verbose is True
 

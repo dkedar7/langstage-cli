@@ -4,7 +4,9 @@ Drives the agent through the official ``ag-ui-langgraph`` adapter in-process (no
 web server) and maps AG-UI events onto the cli's ``print_chunk`` chunk contract —
 so the renderer is unchanged. Text, tool calls, and tool *results* all render, and
 interrupts are fully supported: they DISPLAY as a ``CustomEvent(on_interrupt)`` and
-RESUME via ``forwarded_props.command.resume`` (ADR 0002 gate 2, resolved).
+RESUME through core's resume wire — ag-ui-langgraph's standard ``RunAgentInput.resume[]``
+on 0.0.43+ (langstage-core 1.0.36), the legacy ``forwarded_props.command.resume`` only
+as core's fallback for older adapters (ADR 0002 gate 2, resolved).
 
 ADR 0002 started this as an experimental opt-in behind ``--agui``, alongside a
 bespoke event-parser path. ADR 0003 finished the migration: since langstage-core
@@ -51,11 +53,11 @@ async def agui_stream_updates(
     RunError -> error; and a one-shot MessagesSnapshot -> text when nothing streamed.
     Always terminates with a ``complete`` chunk.
 
-    When ``resume`` is provided (an interrupt is being answered), it is delivered
-    as ``forwarded_props.command.resume`` — the field the ag-ui-langgraph adapter
-    turns into LangGraph's ``Command(resume=...)`` — so the graph continues past
-    the interrupt instead of re-interrupting. Mirrors the default path's
-    ``prepare_agent_input(decisions=...)`` -> ``Command(resume={"decisions": ...})``.
+    When ``resume`` is provided (an interrupt is being answered), core delivers it on
+    the adapter's resume wire (``RunAgentInput.resume[]``, feature-detected), which the
+    adapter turns into LangGraph's ``Command(resume=...)`` — so the graph continues past
+    the interrupt instead of re-interrupting, with no deprecation / JSON-parse warning
+    logged (gh #126, #137).
 
     The mapping itself lives in the core (``agui.iter_chunk_frames``, 0.6.17) —
     shared with langstage-jupyter — so a rendering fix lands once.

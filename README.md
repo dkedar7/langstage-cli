@@ -82,7 +82,7 @@ langstage-cli -f ./prompt.md
 # Non-interactive mode (auto-approve tool calls)
 langstage-cli --no-interactive
 
-# Verbose output
+# Verbose output (node labels; full traceback when a load or a turn errors)
 langstage-cli -v
 
 # Keyless demo agent (no API key needed)
@@ -178,6 +178,16 @@ belongs to LangChain's `dcode`.
 
 Precedence: CLI args > env vars > project TOML > global TOML > defaults.
 
+**Relative paths in a TOML file resolve against that file's directory**, like a path in
+`pyproject.toml`. A relative `[agent] spec` or `[workspace] root` in a project
+`langstage.toml` means "relative to the project root", so the project runs the same from
+any subdirectory. The same rule applies to the global file: a relative path there
+resolves against `~/.langstage/`. So in the global config, use `~/...` or an absolute
+path (or a `package.module:graph` spec), e.g. `spec = "~/agents/my_agent.py:graph"`.
+A path from `-a` or an env var resolves against the directory you run the command from.
+`--show-config` prints the resolved path. A file-path agent can import modules that sit
+next to it, and a `package.module:graph` spec also finds a package in the project directory.
+
 Example `langstage.toml`:
 
 ```toml
@@ -240,8 +250,9 @@ langstage-cli --verify -a my_agent.py:graph || { echo "agent broken" >&2; exit 1
 
 A single-shot run (a `MESSAGE` argument or `-f/--file`) prints only the agent's
 reply — no header, spinner, tool chatter, timing, or color — as soon as its output
-is **piped** (stdout isn't a TTY). Errors and diagnostics go to stderr, and the
-process exits non-zero if the turn failed, so a run is safe to capture:
+is **piped** (stdout isn't a TTY). Errors and diagnostics go to stderr, and so does
+anything your agent module `print`s while it is being imported. The process exits
+non-zero if the turn failed, so a run is safe to capture:
 
 ```bash
 answer=$(langstage-cli --demo "say hi") || echo "run failed" >&2

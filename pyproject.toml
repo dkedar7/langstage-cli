@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langstage-cli"
-version = "0.6.31"
+version = "0.6.32"
 description = "The terminal stage for your LangGraph agent — Claude Code-style CLI for any CompiledGraph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,7 +31,12 @@ dependencies = [
     # is a HARD dep. A bare `pip install langstage-cli` must be able to run a turn.
     # >=1.0.6 for the shared preflight primitive core.verify() used by --verify.
     # >=1.0.14 for describe(configurable=) — the single complete config diagnostic.
-    "langstage-core[agui]>=1.0.28",
+    # >=1.0.36 for spec loading (sibling imports, project-local packages, base_dir=,
+    # stdout_to_stderr=, str-attribute TypeError), TOML-relative paths, malformed-TOML
+    # reporting, the non-deprecated HITL resume wire, message_id frames, and
+    # langstage_core.console (gh #154, #153, #149, #145, #141, #140, #137, #136, #132,
+    # #126, #119).
+    "langstage-core[agui]>=1.0.36",
     "click>=8.0.0",
     "python-dotenv",
     # Durable, cross-invocation session persistence (--continue / --resume, gh #102).
