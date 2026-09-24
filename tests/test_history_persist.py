@@ -43,7 +43,7 @@ def _write_agent(tmp_path, name):
     return f"{p}:graph"
 
 
-def test_history_works_in_default_persist_on_config(tmp_path, monkeypatch):
+def test_history_works_in_default_persist_on_config(tmp_path, monkeypatch, repl_via_stdin):
     # Persist is ON by default (no --no-persist): run one turn to write state to the
     # durable async store, then /history must read it back — not error on the closed
     # AsyncSqliteSaver.
@@ -60,7 +60,7 @@ def test_history_works_in_default_persist_on_config(tmp_path, monkeypatch):
     assert "hello there" in r.output, r.output
 
 
-def test_history_still_works_with_persistence_off(tmp_path, monkeypatch):
+def test_history_still_works_with_persistence_off(tmp_path, monkeypatch, repl_via_stdin):
     # The --no-persist control from the issue: an in-memory checkpointer, so the sync
     # read path is exercised and must keep working (no regression).
     monkeypatch.chdir(tmp_path)

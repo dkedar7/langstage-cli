@@ -51,7 +51,7 @@ def test_config_uses_startup_snapshot_not_a_reresolve(monkeypatch, capsys):
     assert "/abs/self/published/ws" not in out
 
 
-def test_bare_config_reflects_runtime_verbose_mutation():
+def test_bare_config_reflects_runtime_verbose_mutation(repl_via_stdin):
     # gh #97: drive the real interactive loop — flip verbose ON, then the bare `/config`
     # table must show the LIVE value with a non-[default] source, agreeing with the
     # single-key `/config verbose` read and `/status`. Before the fix this printed the
@@ -65,7 +65,7 @@ def test_bare_config_reflects_runtime_verbose_mutation():
     assert not re.search(r"verbose\s*=\s*False\s*\[default\]", r.output), r.output
 
 
-def test_bare_config_agrees_with_status_and_single_key_after_verbose_on():
+def test_bare_config_agrees_with_status_and_single_key_after_verbose_on(repl_via_stdin):
     # The three views that used to diverge must now agree after a mutation (gh #97):
     # `/status` (on), single-key `/config verbose` (True), and the bare `/config` table.
     with CliRunner().isolated_filesystem():
@@ -78,7 +78,7 @@ def test_bare_config_agrees_with_status_and_single_key_after_verbose_on():
     assert re.search(r"verbose\s*=\s*True\s*\[override\]", r.output), r.output  # full table
 
 
-def test_bare_config_reflects_reset_thread_id(tmp_path, monkeypatch):
+def test_bare_config_reflects_reset_thread_id(tmp_path, monkeypatch, repl_via_stdin):
     # gh #97 (Repro B): a `[configurable] thread_id` shown by `/config` must track a
     # runtime `/reset`, not keep printing the pre-reset value.
     (tmp_path / "langstage.toml").write_text('[configurable]\nthread_id = "T-123"\n')

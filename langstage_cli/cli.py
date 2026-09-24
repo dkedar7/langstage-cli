@@ -22,6 +22,7 @@ import click
 
 from langstage_core import apply_workspace, load_agent_spec
 from langstage_core.console import safe_print, safe_write
+from langstage_core.host.config import _env_bool_strict, _warn_malformed_env_value
 from langstage_cli import config as config_module
 from langstage_cli import sessions
 
@@ -72,6 +73,79 @@ def _is_a_tty(stream) -> bool:
         return stream.isatty()
     except (AttributeError, ValueError):
         return False
+
+
+# The pipe names MSYS2 / Cygwin terminals (mintty, Git Bash) give a pty on Windows.
+_MSYS_PTY_RE = re.compile(r"\\(cygwin|msys)-[0-9a-f]+-pty[0-9]+-(from|to)-master")
+
+
+def _is_msys_pty_name(name: str) -> bool:
+    """True when a Windows handle's file name is an MSYS2 / Cygwin pty pipe."""
+    return bool(_MSYS_PTY_RE.search(name))
+
+
+def _win_handle_name(stream) -> Optional[str]:
+    """The file name behind ``stream``'s Windows handle, or ``None`` if unknowable.
+
+    ``GetFileInformationByHandleEx(FileNameInfo)``. A mintty pty is a named pipe such as
+    ``\\msys-1888ae32e00d56aa-pty0-from-master``.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        size = 4 + 2 * 1024  # DWORD FileNameLength + WCHAR FileName[]
+        buf = ctypes.create_string_buffer(size)
+        fn = ctypes.windll.kernel32.GetFileInformationByHandleEx
+        fn.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        fn.restype = wintypes.BOOL
+        if not fn(handle, 2, buf, size):  # 2 = FileNameInfo
+            return None
+        length = int.from_bytes(buf.raw[:4], "little")
+        return buf.raw[4 : 4 + length].decode("utf-16-le", errors="replace")
+    except Exception:  # no fileno, no ctypes, a closed handle: unknowable
+        return None
+
+
+def _win_is_console(stream) -> Optional[bool]:
+    """Whether ``stream``'s handle is a real console, or ``None`` if unknowable.
+
+    ``NUL`` is a character device, so ``isatty()`` is True for ``<NUL`` and
+    ``</dev/null``. ``GetConsoleMode`` fails on it.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        mode = wintypes.DWORD()
+        fn = ctypes.windll.kernel32.GetConsoleMode
+        fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        fn.restype = wintypes.BOOL
+        return bool(fn(handle, ctypes.byref(mode)))
+    except Exception:
+        return None
+
+
+def _stdin_is_interactive(stream=None) -> bool:
+    """Whether a human is typing on stdin: a terminal, not a pipe, file or ``NUL``.
+
+    On POSIX this is ``isatty()``. On Windows two cases need more than ``isatty()``:
+    a mintty / Git Bash terminal is a pipe (``isatty()`` False) with an MSYS pty
+    name, so it counts as interactive, and ``NUL`` (``isatty()`` True) doesn't.
+    A real pipe (``echo hi | langstage-cli``) is never interactive. If the Windows
+    checks can't run, the ``isatty()`` answer stands.
+    """
+    stream = sys.stdin if stream is None else stream
+    tty = _is_a_tty(stream)
+    if not IS_WINDOWS:
+        return tty
+    if tty:
+        console = _win_is_console(stream)
+        return tty if console is None else console
+    name = _win_handle_name(stream)
+    return name is not None and _is_msys_pty_name(name)
 
 
 def _disable_ansi() -> None:
@@ -523,20 +597,148 @@ def print_header_box(agent_name: str, cwd: str, description: Optional[str] = Non
     print(f"{CYAN}{BL}{H * (term_width - 2)}{BR}{RESET}")
 
 
+# A fence opener/closer line: up to 3 spaces, then ``` or ~~~ (3+), then an info string.
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+# Inline spans, tried at the earliest position; on a tie the earlier pattern wins, so
+# ***x*** beats **x** beats *x*. A delimiter opens only when followed by a non-space and
+# closes only when preceded by one (CommonMark's flanking rule, simplified), so a `* item`
+# bullet or `5 * 3` is never emphasis (gh #155). A link URL may hold one level of
+# balanced parentheses, e.g. `.../Merge_sort_(algorithm)` (gh #161).
+_INLINE_RULES = (
+    ("link", re.compile(r"\[([^\]]+)\]\((?:[^()\s]|\([^()\s]*\))+\)")),
+    ("strong_em", re.compile(r"(?<!\*)\*\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*\*(?!\*)")),
+    ("strong", re.compile(r"(?<!\*)\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*(?!\*)")),
+    ("em", re.compile(r"(?<!\*)\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?!\*)")),
+)
+# Placeholder for a protected token (code span / escaped char): NUL-delimited index.
+_PROTECTED_RE = re.compile(r"\x00(\d+)\x00")
+_ESCAPABLE = set("\\`*_{}[]()#+-.!|~<>")
+
+
+def _protect_code_and_escapes(line: str, protected: List[Tuple[str, str]]) -> str:
+    """Swap code spans and backslash escapes for placeholders (gh #156, #161).
+
+    Code spans bind tighter than emphasis and links, so their content must never reach
+    those rules. A code span is a backtick run closed by a run of the same length on the
+    same line. An unmatched run stays literal. ``\\*`` is a literal ``*``, not a delimiter.
+    """
+    out: List[str] = []
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and i + 1 < n and line[i + 1] in _ESCAPABLE:
+            protected.append(("lit", line[i + 1]))
+            out.append(f"\x00{len(protected) - 1}\x00")
+            i += 2
+            continue
+        if ch == "`":
+            j = i
+            while j < n and line[j] == "`":
+                j += 1
+            run = line[i:j]
+            close = line.find(run, j)
+            # The closing run must be exactly as long (not part of a longer run).
+            while close != -1 and close + len(run) < n and line[close + len(run)] == "`":
+                k = close
+                while k < n and line[k] == "`":
+                    k += 1
+                close = line.find(run, k)
+            if close == -1:
+                out.append(run)
+                i = j
+                continue
+            body = line[j:close]
+            if len(body) >= 2 and body[0] == " " and body[-1] == " " and body.strip():
+                body = body[1:-1]
+            protected.append(("code", body))
+            out.append(f"\x00{len(protected) - 1}\x00")
+            i = close + len(run)
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _render_inline(text: str, stack: Tuple[str, ...], protected: List[Tuple[str, str]]) -> str:
+    """Render emphasis and links in ``text`` under the enclosing ``stack`` of styles.
+
+    Closing a span emits RESET and then re-opens every enclosing style, so an inner
+    ``*italic*`` inside ``**bold**`` doesn't end the bold early (gh #161).
+    """
+    styles = {"strong_em": BOLD + ITALIC, "strong": BOLD, "em": ITALIC, "link": UNDERLINE}
+    reopen = "".join(stack)
+
+    def plain(seg: str) -> str:
+        def sub(m: "re.Match[str]") -> str:
+            kind, value = protected[int(m.group(1))]
+            if kind == "code":
+                return f"{CYAN}{value}{RESET}{reopen}"
+            return value
+
+        return _PROTECTED_RE.sub(sub, seg)
+
+    out: List[str] = []
+    pos = 0
+    while True:
+        best = None
+        for kind, rule in _INLINE_RULES:
+            m = rule.search(text, pos)
+            if m and (best is None or m.start() < best[1].start()):
+                best = (kind, m)
+        if best is None:
+            break
+        kind, m = best
+        style = styles[kind]
+        out.append(plain(text[pos : m.start()]))
+        out.append(style)
+        out.append(_render_inline(m.group(1), stack + (style,), protected))
+        out.append(f"{RESET}{reopen}")
+        pos = m.end()
+    out.append(plain(text[pos:]))
+    return "".join(out)
+
+
 def render_markdown(text: str) -> str:
     """Render markdown formatting for terminal display.
 
-    Supports: **bold**, *italic*, `code`, [links](url)
+    Supports **bold**, *italic*, ***both***, `code`, [links](url), backslash escapes,
+    and fenced code blocks. A small tokenizing pass, not layered regexes:
+
+    1. Fenced blocks (```` ``` ```` / ``~~~``) are split out by line first. The fence
+       lines are kept (dimmed) and the body is shown verbatim in the code color, with no
+       inline processing (gh #157). An unclosed fence runs to the end of the text.
+    2. Outside fences, each line is rendered on its own, so a style never leaks across
+       lines. Code spans and escapes become placeholders before any emphasis rule runs,
+       so their content is literal (gh #156).
+    3. Emphasis and links are matched with flanking rules (gh #155) and rendered with a
+       style stack, so nested emphasis keeps the outer style (gh #161).
+
+    The output is lossless: every character that isn't a markdown delimiter survives.
     """
-    # Bold: **text**
-    text = re.sub(r"\*\*(.+?)\*\*", f"{BOLD}\\1{RESET}", text)
-    # Italic: *text* (but not inside **)
-    text = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", f"{ITALIC}\\1{RESET}", text)
-    # Inline code: `code`
-    text = re.sub(r"`([^`]+?)`", f"{CYAN}\\1{RESET}", text)
-    # Links: [text](url) - show text in underline
-    text = re.sub(r"\[([^\]]+?)\]\([^)]+?\)", f"{UNDERLINE}\\1{RESET}", text)
-    return text
+    lines = text.split("\n")
+    out: List[str] = []
+    fence: Optional[str] = None  # the opening fence run while inside a block
+    for line in lines:
+        m = _FENCE_RE.match(line)
+        if fence is None:
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                fence = m.group(1)
+                out.append(f"{DIM}{line}{RESET}")
+                continue
+            protected: List[Tuple[str, str]] = []
+            out.append(_render_inline(_protect_code_and_escapes(line, protected), (), protected))
+        else:
+            if (
+                m
+                and m.group(1)[0] == fence[0]
+                and len(m.group(1)) >= len(fence)
+                and not m.group(2).strip()
+            ):
+                fence = None
+                out.append(f"{DIM}{line}{RESET}")
+            else:
+                out.append(f"{CYAN}{line}{RESET}" if line else line)
+    return "\n".join(out)
 
 
 def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
@@ -1886,11 +2088,9 @@ def run_conversation_loop(
     # Build the in-process AG-UI agent ONCE per session (checkpointer attached by
     # the core bridge) so multi-turn memory persists. Since langstage-core 1.0 the
     # AG-UI adapter is the only streaming path.
-    thread_id = ""
     configurable: Dict[str, Any] = {}
     if isinstance(config, dict):
         configurable = dict(config.get("configurable", {}))
-        thread_id = configurable.get("thread_id", "") or ""
     from langstage_cli.agui_stream import build_session_agent
 
     # Forward the resolved `[configurable]` table (minus thread_id, which the
@@ -1914,8 +2114,15 @@ def run_conversation_loop(
 
     def run_one(msg: str) -> tuple:
         """Run one turn, persisting to the durable store when configured."""
+        # Read the thread id per turn, not once at startup: /clear and /reset mint a new
+        # one in the config, and the next turn must run on it (gh #139).
+        thread_id = ""
+        if isinstance(config, dict):
+            thread_id = config.get("configurable", {}).get("thread_id", "") or ""
         if on_turn is not None:
-            on_turn(msg)  # bump the session index (updated timestamp / first-message snippet)
+            # Index the session (created on its first turn, gh #150), bump its recency and
+            # first-message snippet.
+            on_turn(msg, thread_id)
         if persist_sqlite_path is not None:
             return asyncio.run(
                 _run_turn_persistent(
@@ -1932,7 +2139,7 @@ def run_conversation_loop(
         return asyncio.run(run_single_turn_agui(agui_agent, msg, thread_id, interactive, verbose))
 
     # Process initial message if provided
-    if initial_message:
+    if initial_message is not None:
         if not _QUIET:
             print(f"\n{BOLD}{BRIGHT_BLUE}You{RESET}")
             print(f"{initial_message}")
@@ -1955,15 +2162,12 @@ def run_conversation_loop(
 
     # Main conversation loop.
     #
-    # This loop also consumes a message on piped (non-TTY) stdin — `echo "hi" |
-    # langstage-cli` reads the line via input() and runs one turn, then EOF ends the
-    # loop. That path is scriptable, not an interactive session, so when _QUIET is
-    # set (via -q or the non-TTY auto-quiet above) every decorative element is
-    # suppressed: the `····` separators, the `❯` prompt (input() with no prompt, so
-    # no glyph and no bracketed-paste bytes), the `Nms` timing line, and the
-    # `Goodbye!`. What reaches stdout is then exactly the reply the MESSAGE-arg path
-    # emits. A real TTY session has _QUIET == False, so all of it renders unchanged.
-    # (gh #93)
+    # Piped stdin no longer reaches this loop: main() reads it whole as one single-shot
+    # message (gh #127). When _QUIET is set (-q, or a non-TTY stdout) every decorative
+    # element is still suppressed: the `····` separators, the `❯` prompt (input() with
+    # no prompt, so no glyph and no bracketed-paste bytes), the `Nms` timing line, and
+    # the `Goodbye!` (gh #93). A real TTY session has _QUIET == False, so all of it
+    # renders unchanged.
     while True:
         try:
             if not _QUIET:
@@ -2170,6 +2374,21 @@ def _snapshot_session_store(workspace: Path) -> Optional[Path]:
     return dst
 
 
+def _read_piped_stdin() -> Optional[str]:
+    """All of stdin, stripped, when it is piped or redirected; ``None`` on a terminal
+    (including a mintty / Git Bash terminal on Windows).
+
+    ``None`` means "run the interactive REPL". Tests replace this function to drive the
+    REPL through CliRunner, whose stdin is never a terminal.
+    """
+    if _stdin_is_interactive():
+        return None
+    try:
+        return sys.stdin.read().strip()
+    except (OSError, ValueError):  # closed or unreadable stdin: nothing to send
+        return ""
+
+
 def _resolve_persist(flag: Optional[bool], toml_config: dict) -> bool:
     """Resolve whether to persist this session: ``--persist/--no-persist`` flag >
     ``LANGSTAGE_PERSIST`` env > ``[session] persist`` TOML > default ON (gh #102).
@@ -2181,13 +2400,36 @@ def _resolve_persist(flag: Optional[bool], toml_config: dict) -> bool:
     """
     if flag is not None:
         return flag
-    env = os.getenv("LANGSTAGE_PERSIST")
-    if env is not None and env != "":
-        return env.strip().lower() in ("1", "true", "yes", "on")
+    env = _env_persist(toml_config)
+    if env is not None:
+        return env
     toml_val = config_module.get(toml_config, "session.persist")
     if isinstance(toml_val, bool):
         return toml_val
     return True
+
+
+def _env_persist(toml_config: dict) -> Optional[bool]:
+    """``LANGSTAGE_PERSIST`` parsed with core's strict boolean rules, or ``None``.
+
+    ``None`` means the env layer doesn't set it: unset, empty, or malformed. A malformed
+    value (``enabled``) used to mean "off", so an attempt to turn persistence ON silently
+    turned it off (gh #151). Now it gets the same one-line ``note:`` every other boolean
+    env var gets, and the lower layers (``[session] persist``, then default ON) decide.
+    """
+    env = os.getenv("LANGSTAGE_PERSIST")
+    if env is None or env == "":
+        return None
+    try:
+        return _env_bool_strict(env)
+    except ValueError as exc:
+        toml_val = config_module.get(toml_config, "session.persist")
+        if isinstance(toml_val, bool):
+            kept, kept_src = toml_val, "toml (session.persist)"
+        else:
+            kept, kept_src = True, "default"
+        _warn_malformed_env_value("LANGSTAGE_PERSIST", env, exc, kept, kept_src)
+        return None
 
 
 def _persist_source_label(flag: Optional[bool], toml_config: dict) -> str:
@@ -2196,8 +2438,7 @@ def _persist_source_label(flag: Optional[bool], toml_config: dict) -> str:
     default) so ``--show-config`` attributes it just like every other key (gh #108)."""
     if flag is not None:
         return "override"
-    env = os.getenv("LANGSTAGE_PERSIST")
-    if env is not None and env != "":
+    if _env_persist(toml_config) is not None:
         return "env:LANGSTAGE_PERSIST"
     if isinstance(config_module.get(toml_config, "session.persist"), bool):
         return "toml (session.persist)"
@@ -2478,7 +2719,7 @@ def main(
     # UX is unchanged; --quiet still forces quiet anywhere. Color is additionally
     # stripped whenever stdout is not a TTY, matching well-behaved CLIs.
     _is_tty = _is_a_tty(sys.stdout)
-    _stdin_is_tty = _is_a_tty(sys.stdin)
+    _stdin_is_tty = _stdin_is_interactive()  # a mintty pty counts; NUL doesn't
     global _QUIET
     _QUIET = quiet or (
         (bool(message or prompt_file) or verify_agent or not _stdin_is_tty) and not _is_tty
@@ -2563,7 +2804,7 @@ def main(
 
     try:
         # Handle -f/--file option: read message from file
-        if prompt_file and message:
+        if prompt_file and message is not None:
             _status(f"{RED}⏺ Error: Cannot use both MESSAGE argument and -f/--file option{RESET}")
             sys.exit(1)
 
@@ -2576,6 +2817,14 @@ def main(
                     sys.exit(1)
             except Exception as e:
                 _status(f"{RED}⏺ Error reading file '{prompt_file}': {e}{RESET}")
+                sys.exit(1)
+        elif message is not None:
+            # An explicit MESSAGE, even "", means single-shot. `"$MSG"` expanding to
+            # nothing used to be taken as "no message": the REPL started despite
+            # --no-interactive and hung on an open stdin (gh #123). Reject it the way
+            # an empty -f file is rejected.
+            if not message.strip():
+                _status(f"{RED}⏺ Error: MESSAGE is empty{RESET}")
                 sys.exit(1)
 
         # Load TOML configuration (global + project, merged)
@@ -2625,6 +2874,16 @@ def main(
         if list_sessions or resume_id == _RESUME_LIST_SENTINEL:
             _print_sessions(workspace)
             return
+
+        # No MESSAGE and no -f: piped stdin is ONE message, sent as a single-shot turn
+        # like -f. It used to feed the REPL line by line, so a multi-line prompt became
+        # several turns and a `/quit` line in it ran as a command (gh #127). A live
+        # terminal still gets the REPL.
+        if message is None and not verify_agent:
+            message = _read_piped_stdin()
+            if message == "":
+                _status(f"{RED}⏺ Error: no message on stdin (it was empty){RESET}")
+                sys.exit(1)
 
         # Persistence is on by default so a fresh run can be continued later; disable via
         # --no-persist / LANGSTAGE_PERSIST=0 / [session] persist=false. --continue and
@@ -2779,12 +3038,16 @@ def main(
                 # pinned a thread and it still forgot" gap), else the fresh uuid above.
                 session_thread = config_dict["configurable"]["thread_id"]
             config_dict["configurable"]["thread_id"] = session_thread
-            sessions.record_session(workspace, session_thread, first_message=message)
+            # No index entry yet: a session is recorded by its first turn (on_turn), so
+            # opening the REPL and quitting leaves no empty "(no message yet)" session
+            # for the next -c to resume (gh #150). The turn is recorded before it runs,
+            # so -c still finds it if the turn errors. The thread id comes from the
+            # turn, since /clear and /reset start a new one (gh #139).
             if use_durable:
                 persist_sqlite_path = sessions.db_path(workspace)
 
-            def on_turn(msg: str) -> None:  # bump index recency + first-message snippet
-                sessions.touch_session(workspace, session_thread, first_message=msg)
+            def on_turn(msg: str, thread_id: str) -> None:
+                sessions.touch_session(workspace, thread_id, first_message=msg)
 
             config_dict["_session_info"] = {
                 "persist": True,
@@ -2810,7 +3073,7 @@ def main(
             verbose=verbose,
             stream_mode=final_stream_mode,
             initial_message=message,
-            single_shot=bool(message),
+            single_shot=message is not None,
             persist_sqlite_path=persist_sqlite_path,
             on_turn=on_turn,
         )

@@ -44,7 +44,9 @@ def test_show_config_without_flags_still_reports_env():
     assert re.search(r"agent_spec\s*=\s*fromenv\.py:graph\s*\[env:", r.output), r.output
 
 
-def test_show_config_and_slash_config_render_the_same_diagnostic(tmp_path, monkeypatch):
+def test_show_config_and_slash_config_render_the_same_diagnostic(
+    tmp_path, monkeypatch, repl_via_stdin
+):
     # Consolidation guard (gh #64/#66 class): `--show-config` and interactive `/config`
     # both render the ONE describe() diagnostic (fields + sources + the [configurable]
     # table), so they can't drift. Lock it — every resolved line from --show-config must

@@ -82,3 +82,14 @@ def _isolate_published_workspace():
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@pytest.fixture
+def repl_via_stdin(monkeypatch):
+    """Drive the interactive REPL with CliRunner's ``input=``.
+
+    Piped stdin is read as ONE single-shot message (gh #127), and CliRunner's stdin is
+    never a terminal, so a test that types REPL lines (``/config``, ``/quit``, ...) opts
+    back into the REPL by making the "read piped stdin" step report a terminal.
+    """
+    monkeypatch.setattr(_cli, "_read_piped_stdin", lambda: None)

@@ -259,6 +259,16 @@ answer=$(langstage-cli --demo "say hi") || echo "run failed" >&2
 echo "$answer"        # -> (demo agent) You said: say hi
 ```
 
+Piped stdin works the same way. With no `MESSAGE` or `-f`, everything on stdin is sent
+as **one** message, like `-f`. Lines starting with `/` are part of the message, not
+commands. An empty `MESSAGE` or empty stdin is an error, not a silent no-op. A terminal
+still gets the interactive REPL. On Windows that includes mintty / Git Bash, where stdin
+is an MSYS pty pipe rather than a console. `<NUL` counts as empty stdin, not a terminal:
+
+```bash
+cat prompt.txt | langstage-cli --demo
+```
+
 Pass `-q/--quiet` to force the same clean output in a terminal.
 
 ## Creating Your Own Agent
