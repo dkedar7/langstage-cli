@@ -168,35 +168,6 @@ class CodeConfig(HostConfig):
         return obj
 
 
-def toml_dir_for(cfg: HostConfig, field_name: str) -> Optional[Path]:
-    """Directory of the merged ``langstage.toml`` that actually DEFINES ``field_name``.
-
-    Config discovery walks UP ancestor dirs to find ``langstage.toml`` (a project-root
-    concept), so a relative path declared in it — e.g. ``init``'s ``agent.spec =
-    "my_agent.py:graph"`` — must resolve against the directory that CONTAINS the toml
-    (the discovered project root), not the process cwd, the same way a path in
-    ``pyproject.toml`` / ``tsconfig.json`` resolves relative to the config file. This
-    returns that directory so the caller can rebase the relative value. (gh #116)
-
-    A global ``~/.langstage/config.toml`` and a project ``langstage.toml`` may both be
-    merged; the winning file is the highest-precedence (last) one that actually defines
-    the field's dotted key — mirroring the winner-finding in ``HostConfig.resolve`` and
-    ``_correct_toml_source_file_labels``. Returns ``None`` when the field isn't
-    TOML-mapped or no read file defines it.
-    """
-    toml_paths = getattr(cfg, "_toml_paths", None)
-    if not toml_paths:
-        return None
-    dotted = type(cfg)._toml_map().get(field_name)
-    if dotted is None:
-        return None
-    winner: Optional[Path] = None
-    for path in toml_paths:
-        if _get_dotted(_read_toml(path), dotted) is not None:
-            winner = path
-    return winner.parent if winner is not None else None
-
-
 def _correct_toml_source_file_labels(cfg: HostConfig) -> None:
     """Re-attribute each TOML-sourced value to the file it ACTUALLY came from (gh #101).
 

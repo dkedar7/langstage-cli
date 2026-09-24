@@ -6,7 +6,6 @@ Styled after Claude Code / nanocode.
 import asyncio
 import copy
 import json
-import logging
 import os
 import re
 import subprocess
@@ -22,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 
 from langstage_core import apply_workspace, load_agent_spec
+from langstage_core.console import safe_print, safe_write
 from langstage_cli import config as config_module
 from langstage_cli import sessions
 
@@ -102,7 +102,9 @@ def _status(msg: str) -> None:
     """
     if _QUIET:
         msg = msg.removeprefix("⏺ ")
-    print(msg, file=sys.stderr if _QUIET else sys.stdout)
+    # safe_print: a status line can carry agent/config text (an exception message, a
+    # path under a localized user folder) the console can't encode (core console.py).
+    safe_print(msg, file=sys.stderr if _QUIET else sys.stdout)
 
 
 def _fmt_exc(e: BaseException) -> str:
@@ -132,52 +134,6 @@ _INERT_KEYS = ["host", "port", "debug", "title", "stream_mode", "async_mode"]
 # Sentinel value of a bare ``--resume`` (no id): list this workspace's sessions instead
 # of resuming one. Matches the click option's ``flag_value``. (gh #102)
 _RESUME_LIST_SENTINEL = "__LIST__"
-
-# On the interactive HITL path, answering a plain-string ``interrupt(...)`` with free
-# text makes the bundled ``ag_ui_langgraph`` dep log a benign WARNING on EVERY response
-# — "failed to parse resume_input as JSON, treating as string (...)" — right above the
-# correct answer. The resumed value is right; the line just looks like an error. Drop
-# ONLY that one record so no other ag_ui_langgraph warning is ever hidden. cli-local by
-# design: the CLI owns its console UX, so this stays out of core. (gh #103)
-_AGUI_RESUME_JSON_WARNING = "failed to parse resume_input as JSON"
-
-# The warning is emitted by ``logging.getLogger("ag_ui_langgraph.agent")`` (the module
-# ``__name__``). A logger-level filter is consulted ONLY for records ORIGINATING on that
-# logger — during propagation ancestor-logger filters are skipped — so the filter must
-# sit on the emitting child logger (verified empirically). The package logger is added
-# too, defensively, in case a future version emits on it directly.
-_AGUI_WARNING_LOGGERS = ("ag_ui_langgraph.agent", "ag_ui_langgraph")
-
-
-class _DropResumeJSONWarning(logging.Filter):
-    """A surgical filter that removes ONLY ag_ui_langgraph's resume-JSON warning (gh #103)."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            message = record.getMessage()
-        except Exception:  # noqa: BLE001 - a malformed record must never break logging
-            message = str(getattr(record, "msg", ""))
-        return _AGUI_RESUME_JSON_WARNING not in message
-
-
-@contextmanager
-def _quiet_agui_resume_json_warning():
-    """Drop ag_ui_langgraph's benign resume-JSON WARNING for the wrapped block (gh #103).
-
-    Installs the precise :class:`_DropResumeJSONWarning` filter on the emitting logger
-    for the duration and removes it after — so the noise is gone from the interactive
-    resume path while every OTHER warning still reaches the console.
-    """
-    filt = _DropResumeJSONWarning()
-    loggers = [logging.getLogger(name) for name in _AGUI_WARNING_LOGGERS]
-    for lg in loggers:
-        lg.addFilter(filt)
-    try:
-        yield
-    finally:
-        for lg in loggers:
-            lg.removeFilter(filt)
-
 
 # Spinner frames for thinking animation
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -548,7 +504,7 @@ def print_header_box(agent_name: str, cwd: str, description: Optional[str] = Non
     else:
         # Fall back to plain text if ASCII art doesn't fit
         title_line = agent_name.center(inner_width)
-        print(
+        safe_print(
             f"{BRIGHT_CYAN}{V}{RESET} {BOLD}{BRIGHT_CYAN}{title_line}{RESET} {BRIGHT_CYAN}{V}{RESET}"
         )
 
@@ -561,9 +517,9 @@ def print_header_box(agent_name: str, cwd: str, description: Optional[str] = Non
             else description[: inner_width - 3] + "..."
         )
         desc_line = desc_display.center(inner_width)
-        print(f"{CYAN}{V}{RESET} {DIM}{ITALIC}{desc_line}{RESET} {CYAN}{V}{RESET}")
+        safe_print(f"{CYAN}{V}{RESET} {DIM}{ITALIC}{desc_line}{RESET} {CYAN}{V}{RESET}")
 
-    print(f"{CYAN}{V}{RESET} {DIM}{cwd_line}{RESET} {CYAN}{V}{RESET}")
+    safe_print(f"{CYAN}{V}{RESET} {DIM}{cwd_line}{RESET} {CYAN}{V}{RESET}")
     print(f"{CYAN}{BL}{H * (term_width - 2)}{BR}{RESET}")
 
 
@@ -613,7 +569,12 @@ def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
 
 
 def load_graph(
-    spec: str, default_graph_name: str = "graph", attach_default_checkpointer: bool = True
+    spec: str,
+    default_graph_name: str = "graph",
+    attach_default_checkpointer: bool = True,
+    *,
+    base_dir: Optional[Path] = None,
+    stdout_to_stderr: bool = False,
 ):
     """
     Load a graph from either a file path or module path.
@@ -632,9 +593,16 @@ def load_graph(
     Args:
         spec: File path or module path, optionally with :graph_name suffix
         default_graph_name: Graph name to use if not specified in spec
+        base_dir: Where a relative file path / project-local dotted module resolves
+            (core's ``load_agent_spec(base_dir=)``). Default: the cwd.
+        stdout_to_stderr: Send the agent module's import-time ``print``s to stderr, so
+            they can't corrupt a scriptable reply on stdout (gh #136).
 
     Returns:
         Tuple of (graph, graph_name).
+
+    Raises:
+        TypeError: the spec resolved to a ``str`` rather than an agent (core, gh #149).
     """
     path_or_module = spec
     graph_name = default_graph_name
@@ -647,7 +615,15 @@ def load_graph(
             path_or_module = head
             graph_name = tail or default_graph_name
 
-    graph = load_agent_spec(f"{path_or_module}:{graph_name}")
+    # Core owns spec import semantics: a file spec's own dir goes on sys.path so the
+    # agent can import its siblings (gh #145), a project-local dotted spec falls back to
+    # base_dir (gh #141), and a str attribute raises a clean TypeError instead of being
+    # re-read as a second spec (gh #149).
+    graph = load_agent_spec(
+        f"{path_or_module}:{graph_name}",
+        base_dir=base_dir,
+        stdout_to_stderr=stdout_to_stderr,
+    )
     # Skip the in-memory default when a durable per-workspace saver will be attached
     # instead (session persistence, gh #102) — else build_agent's in-memory fallback
     # would win and cross-invocation memory would be lost.
@@ -678,6 +654,31 @@ def _ensure_checkpointer(graph: Any) -> None:
         pass
 
 
+def _with_checkpointer(graph: Any, saver: Any) -> Any:
+    """Return ``graph`` bound to ``saver`` WITHOUT mutating the caller's object.
+
+    The per-turn durable ``AsyncSqliteSaver`` is closed when its turn ends. Assigning it
+    onto the loaded graph in place left that closed saver attached to the object —
+    which, for a module-level graph that stays cached in ``sys.modules`` (``--demo``,
+    any ``pkg.mod:attr`` spec), made the next in-process run treat it as a
+    user-supplied checkpointer and fail ``ValueError: no active connection``. Bind a
+    copy instead (``Pregel.copy``, the same move core's ``build_agent`` makes for its
+    in-memory default since 1.0.36, gh core#163). A graph-like without ``copy`` falls
+    back to the in-place set; one that rejects the attribute (``None``, a dict — the
+    wrong-type case, gh #117) is returned untouched so ``build_agent``'s clean
+    ``TypeError`` still names it.
+    """
+    try:
+        return graph.copy(update={"checkpointer": saver})
+    except Exception:  # noqa: BLE001 - not a Pregel graph; fall back below
+        pass
+    try:
+        graph.checkpointer = saver
+    except Exception:  # noqa: BLE001 - defer to build_agent's clean type validation
+        pass
+    return graph
+
+
 def _split_py_file_spec(spec: str) -> Optional[Tuple[str, str]]:
     """Split a ``path.py[:attr]`` agent spec into ``(file_path, suffix)`` when the
     path part is a ``.py`` FILE path; return ``None`` for module specs / non-specs.
@@ -686,8 +687,9 @@ def _split_py_file_spec(spec: str) -> Optional[Tuple[str, str]]:
     ``path:attr`` split is the same one ``load_graph`` uses and stays Windows
     drive-letter safe: a trailing ``':token'`` is a graph-name suffix only when it
     has no path separator, so ``C:\\x.py:graph`` keeps its drive colon and splits at
-    the final ``:graph``. Shared by ``_absolutize_file_spec`` (cwd base, gh #30) and
-    ``_rebase_toml_file_spec`` (toml-dir base, gh #116) so the parse lives in one place.
+    the final ``:graph``. Used by ``_absolutize_file_spec`` (cwd base, gh #30); a
+    toml-sourced spec needs no rebasing here — core resolves it against the toml's
+    own directory (langstage-core 1.0.36, gh #116).
     """
     if not spec:
         return None
@@ -718,32 +720,6 @@ def _absolutize_file_spec(spec: str) -> str:
         return spec
     path_part, suffix = parsed
     return f"{Path(path_part).expanduser().resolve()}{suffix}"
-
-
-def _rebase_toml_file_spec(spec: str, toml_dir: Path) -> str:
-    """Resolve a relative *file-path* agent spec that came from a ``langstage.toml``
-    against that toml's OWN directory — the discovered project root — not the cwd.
-
-    Config discovery walks UP to find ``langstage.toml``, but a relative ``agent.spec``
-    in it (what ``init`` scaffolds, e.g. ``"my_agent.py:graph"``) was resolved against
-    the process cwd, so running from a subdir crashed ``Agent file not found`` even
-    though ``--show-config`` reported the spec resolved. A toml-sourced relative spec's
-    natural base is the config file's directory — like a path in ``pyproject.toml`` /
-    ``tsconfig.json`` resolves relative to the config file — so the project runs
-    identically from its root and any subdirectory. (gh #116)
-
-    Only applied to *toml-sourced* specs; specs from ``-a`` / ``LANGSTAGE_AGENT_SPEC``
-    keep #30's cwd-relative base ("where the user typed it"). Module specs
-    (``pkg.mod:attr``) and already-absolute paths pass through unchanged.
-    """
-    parsed = _split_py_file_spec(spec)
-    if parsed is None:
-        return spec
-    path_part, suffix = parsed
-    file_path = Path(path_part).expanduser()
-    if file_path.is_absolute():
-        return spec
-    return f"{(toml_dir / file_path).resolve()}{suffix}"
 
 
 def get_tool_arg_preview(args: Dict[str, Any]) -> str:
@@ -858,7 +834,7 @@ def _print_approval_preview(preview: str) -> None:
     """Print an approval preview under its label; a multi-line preview (one field per
     line, gh #146) keeps every line aligned under the ``└─``."""
     for n, line in enumerate(preview.split("\n") if preview else []):
-        print(f"     {DIM}{'└─' if n == 0 else '  '} {line}{RESET}")
+        safe_print(f"     {DIM}{'└─' if n == 0 else '  '} {line}{RESET}")
 
 
 def _compact_repr(value: Any) -> str:
@@ -940,6 +916,17 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         if "chunk" in chunk:
             text = chunk["chunk"]
             node = chunk.get("node", "unknown")
+            # A new message starts a new paragraph even within one node: a node that
+            # returns two AIMessages, or core's finished-message frames (1.0.36), carry
+            # a different message_id per message. Tokens of one message share an id, so
+            # they still join unbroken. Frames without an id fall back to the node rule.
+            # (gh #119)
+            message_id = chunk.get("message_id")
+            new_block = print_chunk._streaming_text and (
+                print_chunk._streaming_node != node
+                or (message_id is not None and print_chunk._streaming_message_id != message_id)
+            )
+            print_chunk._streaming_message_id = message_id
             if _QUIET:
                 # Scriptable path (gh #53): emit the raw reply text only — no cyan
                 # bullet, no [node] label, and no markdown re-rendering, so a pipe
@@ -951,9 +938,9 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 # machine-parseable — was the only one that dropped the boundary
                 # (gh #74). Tokens of a single message share one node, so they still
                 # join unbroken.
-                if print_chunk._streaming_text and print_chunk._streaming_node != node:
-                    print()  # node changed mid-turn — break so the messages don't concatenate
-                print(text, end="", flush=True)
+                if new_block:
+                    print()  # new message mid-turn — break so the messages don't concatenate
+                safe_write(text, flush=True)
                 print_chunk._streaming_node = node
                 print_chunk._streaming_text = True
                 return
@@ -963,13 +950,13 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 # tokens with no label. A token-streaming model emits one chunk per
                 # token, so prefixing [node] on every chunk jammed it before every
                 # token. The #34 fix covered only the non-verbose branch. (gh #40)
-                if not print_chunk._streaming_text or print_chunk._streaming_node != node:
+                if not print_chunk._streaming_text or new_block:
                     if print_chunk._streaming_text:
-                        print()  # node changed mid-run — break before the new label
+                        print()  # new message mid-run — break before the new label
                     print(f"{DIM}[{node}]{RESET} ", end="")
                     print_chunk._streaming_node = node
                     print_chunk._streaming_text = True
-                print(text, end="")
+                safe_write(text)
             else:
                 # Print the cyan bullet ONCE at the start of a streamed AI turn AND
                 # again when the node changes mid-turn, then append subsequent tokens
@@ -977,14 +964,14 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 # a per-chunk marker jammed a `⏺` before every token (gh #34); but a
                 # per-turn-only marker ran two nodes' messages together on one line with
                 # no separator (gh #43). Break + re-mark on a node change.
-                if not print_chunk._streaming_text or print_chunk._streaming_node != node:
+                if not print_chunk._streaming_text or new_block:
                     if print_chunk._streaming_text:
-                        print()  # node changed mid-turn — break before the new marker
-                    print(f"{CYAN}⏺{RESET} {render_markdown(text)}", end="")
+                        print()  # new message mid-turn — break before the new marker
+                    safe_write(f"{CYAN}⏺{RESET} {render_markdown(text)}")
                     print_chunk._streaming_node = node
                     print_chunk._streaming_text = True
                 else:
-                    print(render_markdown(text), end="")
+                    safe_write(render_markdown(text))
 
         # Handle tool calls - green tool name
         elif "tool_calls" in chunk:
@@ -996,18 +983,20 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 args = tool_call.get("args", {})
                 arg_preview = get_tool_arg_preview(args)
 
-                print(f"\n{GREEN}● {tool_name}{RESET}")
+                safe_print(f"\n{GREEN}● {tool_name}{RESET}")
                 if arg_preview:
-                    print(f"  {DIM}└─ {arg_preview}{RESET}")
+                    safe_print(f"  {DIM}└─ {arg_preview}{RESET}")
 
         # Handle tool results - indented with result preview
         elif "tool_result" in chunk:
             if _QUIET:
                 return  # tool chatter is decoration; scriptable output omits it
+            if print_chunk._streaming_text:
+                print()  # never glue a result onto the end of a text line (gh #119)
             print_chunk._streaming_text = False
             result = chunk.get("tool_result", "")
             preview = format_result_preview(str(result))
-            print(f"  {DIM}   ↳ {preview}{RESET}")
+            safe_print(f"  {DIM}   ↳ {preview}{RESET}")
 
     elif status == "interrupt":
         print_chunk._streaming_text = False
@@ -1032,7 +1021,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 # and a bare string raised `'str' has no attribute 'get'`. Render ANY
                 # payload actionably (gh #82); the structured tool path is unchanged.
                 label, args_preview = format_interrupt_request(action)
-                print(f"  {DIM}{i + 1}. {label}{RESET}")
+                safe_print(f"  {DIM}{i + 1}. {label}{RESET}")
                 _print_approval_preview(args_preview)
         else:
             # No structured action_requests. A bare-string/scalar interrupt loses its
@@ -1046,7 +1035,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 print(f"  {DIM}(no action details provided){RESET}")
             else:
                 label, args_preview = format_interrupt_request(raw)
-                print(f"  {DIM}{label}{RESET}")
+                safe_print(f"  {DIM}{label}{RESET}")
                 _print_approval_preview(args_preview)
 
     elif status == "complete":
@@ -1055,11 +1044,20 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
     elif status == "error":
         print_chunk._streaming_text = False
         error_msg = chunk.get("error", "Unknown error")
+        # Keep stdout clean for the pipe; errors go to stderr. (gh #53)
+        out = sys.stderr if _QUIET else sys.stdout
         if _QUIET:
-            # Keep stdout clean for the pipe; errors go to stderr. (gh #53)
-            print(f"Error: {error_msg}", file=sys.stderr)
+            safe_print(f"Error: {error_msg}", file=out)
         else:
-            print(f"\n{RED}✗ Error: {error_msg}{RESET}")
+            safe_print(f"\n{RED}✗ Error: {error_msg}{RESET}", file=out)
+        # A turn-time error gets the same -v escalation as a load error (gh #153): under
+        # -v the turn ran with LANGSTAGE_DEBUG, so core put the traceback on the frame;
+        # otherwise point at -v.
+        tb = chunk.get("traceback")
+        if verbose and tb:
+            safe_print(f"{DIM}{tb.rstrip()}{RESET}", file=out)
+        elif not verbose:
+            safe_print(f"{DIM}Re-run with -v for the full traceback.{RESET}", file=out)
 
 
 # Whether the current AI turn has already emitted its leading cyan bullet. Tracked
@@ -1069,6 +1067,8 @@ print_chunk._streaming_text = False
 # The node whose tokens are currently streaming, so verbose mode prints the
 # [node] label once per run instead of before every token (gh #40).
 print_chunk._streaming_node = None
+# The message_id of the text run in progress: a change is a message boundary (gh #119).
+print_chunk._streaming_message_id = None
 
 
 def get_key() -> str:
@@ -1174,7 +1174,7 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
 def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> Any:
     """
     Handle user input for an interrupt using arrow key navigation, returning the
-    value to resume the graph with (the ``command.resume`` payload).
+    value to resume the graph with (the resume payload).
 
     Args:
         num_actions: Number of pending tool calls that need decisions
@@ -1472,7 +1472,7 @@ def cmd_config(args: str, context: Dict[str, Any]) -> Optional[str]:
         # and the startup table still matches --show-config byte-for-byte (gh #64, #66).
         report = _live_resolved_report(config, context)
         for line in report.splitlines():
-            print(f"  {line}")
+            safe_print(f"  {line}")
         print()
     else:
         parts = args.split(maxsplit=1)
@@ -1512,8 +1512,7 @@ async def _aget_state_via_durable_saver(graph: Any, store_path: str, config: Dic
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
     async with AsyncSqliteSaver.from_conn_string(store_path) as saver:
-        graph.checkpointer = saver
-        return await graph.aget_state(config)
+        return await _with_checkpointer(graph, saver).aget_state(config)
 
 
 @register_command(
@@ -1577,14 +1576,14 @@ def cmd_history(args: str, context: Dict[str, Any]) -> Optional[str]:
                     # Truncate long content
                     if len(content) > 200:
                         content = content[:200] + "..."
-                    print(f"  {DIM}{content}{RESET}")
+                    safe_print(f"  {DIM}{content}{RESET}")
                 print()
             else:
                 print(f"{DIM}No messages in history{RESET}")
         else:
             print(f"{DIM}No state available{RESET}")
     except Exception as e:
-        print(f"{DIM}Could not retrieve history: {e}{RESET}")
+        safe_print(f"{DIM}Could not retrieve history: {e}{RESET}")
 
     return None
 
@@ -1692,6 +1691,30 @@ def setup_readline_completion():
         readline.parse_and_bind("tab: complete")
 
 
+_DEBUG_ENV = "LANGSTAGE_DEBUG"
+
+
+@contextmanager
+def _debug_tracebacks(enabled: bool):
+    """Turn on core's error-frame tracebacks for the wrapped turn when ``enabled``.
+
+    Core attaches ``traceback`` to the terminal ``error`` frame only when the resolved
+    ``debug`` is on (``LANGSTAGE_DEBUG``), resolved per error — so setting the env var for
+    the turn is enough. ``-v`` is the CLI's documented "show me more" knob, and the load
+    path already prints a traceback under it; this gives turn-time errors the same
+    (gh #153). A value the user set themselves is left alone, and ours is removed after
+    the turn so nothing leaks into the rest of the process.
+    """
+    if not enabled or os.environ.get(_DEBUG_ENV):
+        yield
+        return
+    os.environ[_DEBUG_ENV] = "1"
+    try:
+        yield
+    finally:
+        os.environ.pop(_DEBUG_ENV, None)
+
+
 async def run_single_turn_agui(
     agent,
     message: str,
@@ -1706,9 +1729,14 @@ async def run_single_turn_agui(
     reach parity with the default path (and tool *results* are also shown).
 
     Interrupts are fully supported (ADR 0002 gate 2, resolved): an interrupt is
-    displayed, the decision is collected, and the turn resumes via the AG-UI
-    adapter's ``forwarded_props.command.resume`` — mirroring the default path's
-    interrupt loop, including the ``--no-interactive`` auto-approve behavior.
+    displayed, the decision is collected, and the turn resumes through core's resume
+    wire (``RunAgentInput.resume[]`` on ag-ui-langgraph 0.0.43+, so no deprecation /
+    JSON-parse warning is logged — gh #126, #137), including the ``--no-interactive``
+    auto-approve behavior.
+
+    Under ``verbose`` (``-v``) the turn runs with ``LANGSTAGE_DEBUG`` enabled, so an
+    exception inside a node/tool arrives with its traceback on the error frame and
+    ``print_chunk`` shows it (gh #153).
     """
     from langstage_cli.agui_stream import agui_stream_updates
 
@@ -1728,12 +1756,7 @@ async def run_single_turn_agui(
         if spinner:
             spinner.start()
         try:
-            # Silence ag_ui_langgraph's benign "failed to parse resume_input as JSON"
-            # WARNING that fires on a free-text interrupt() resume, so it never appears
-            # above the (correct) answer on the interactive HITL path. The filter is
-            # surgical — only that one record — so wrapping the whole turn is harmless
-            # (the warning can only fire on a resume pass anyway). (gh #103)
-            with _quiet_agui_resume_json_warning():
+            with _debug_tracebacks(verbose):
                 async for chunk in agui_stream_updates(agent, message, thread_id, resume=resume):
                     if first_chunk:
                         if spinner:
@@ -1810,19 +1833,11 @@ async def _run_turn_persistent(
     from langstage_cli.agui_stream import build_session_agent
 
     async with AsyncSqliteSaver.from_conn_string(str(sqlite_path)) as saver:
-        # Attach the durable saver, but GUARD the assignment the way _ensure_checkpointer
-        # does. A wrong-type agent object (graph = None / a dict / an int — not a compiled
-        # graph) rejects the attribute set, and on this default persist-on path that used
-        # to leak a cryptic `AttributeError: 'X' object has no attribute 'checkpointer'`
-        # BEFORE any validation ran. Swallowing it lets the object fall through to
-        # build_session_agent -> build_agent, whose validator raises the clean, actionable
-        # `TypeError: build_agent expected a compiled LangGraph graph ...` — the same
-        # message --verify / --no-persist already show. A valid graph accepts the
-        # assignment, so durable persistence is unchanged. (gh #117)
-        try:
-            graph.checkpointer = saver
-        except Exception:  # noqa: BLE001 - defer to build_agent's clean type validation below
-            pass
+        # Bind the durable saver to a COPY of the graph (never the caller's object — a
+        # closed saver left on a cached module graph broke the next in-process run). A
+        # wrong-type object (None / a dict) comes back untouched, so build_session_agent
+        # -> build_agent raises its clean, actionable TypeError (gh #117).
+        graph = _with_checkpointer(graph, saver)
         agent = build_session_agent(graph, name=name, config=session_config)
         return await run_single_turn_agui(agent, message, thread_id, interactive, verbose)
 
@@ -2193,11 +2208,7 @@ def _sessions_store_source_label() -> str:
     """The ``[source]`` for the sessions store directory (gh #108)."""
     if os.getenv(sessions._SESSIONS_DIR_ENV):
         return f"env:{sessions._SESSIONS_DIR_ENV}"
-    if os.getenv("LANGSTAGE_CONFIG_HOME"):
-        return "env:LANGSTAGE_CONFIG_HOME"
-    if os.getenv("DEEPAGENTS_CONFIG_HOME"):
-        return "env:DEEPAGENTS_CONFIG_HOME"
-    return "default"
+    return sessions.config_home_source()
 
 
 def _persist_diagnostic_block(flag: Optional[bool], toml_config: dict, workspace: Path) -> str:
@@ -2547,7 +2558,7 @@ def main(
         _diag += "\n" + _persist_diagnostic_block(
             persist, _toml, Path(_cfg.workspace_root).expanduser().resolve()
         )
-        print(_diag)
+        safe_print(_diag)
         return
 
     try:
@@ -2640,30 +2651,27 @@ def main(
                 _status(f"\n{DIM}Or set the LANGSTAGE_AGENT_SPEC environment variable{RESET}")
                 sys.exit(1)
 
-        # Resolve a relative file-path spec to an absolute path BEFORE we chdir into
-        # the workspace root — otherwise it's looked up under workspace_root, not where
-        # the file is. The BASE directory depends on WHERE the spec came from:
+        # The BASE directory a relative spec resolves against depends on WHERE it came
+        # from, and must be fixed BEFORE we chdir into the workspace root:
         #   - a spec from a discovered `langstage.toml` resolves against THAT toml's own
-        #     directory (the project root the walk-up found), like a path in
-        #     pyproject.toml / tsconfig — so the project runs identically from its root
-        #     and any subdirectory (gh #116);
+        #     directory (the project root the walk-up found), so the project runs
+        #     identically from its root and any subdirectory (gh #116). Core rebases a
+        #     `file.py:attr` spec itself (1.0.36); passing the toml dir as base_dir also
+        #     covers a dotted project package (gh #141) and cli's bare `file.py` form;
         #   - a spec from `-a` / `LANGSTAGE_AGENT_SPEC` (or the built-in default) stays
-        #     cwd-relative — "the file is where the user typed the command" (gh #30).
-        spec_toml_dir = (
-            config_module.toml_dir_for(cfg, "agent_spec")
-            if cfg.sources.get("agent_spec", "").startswith("toml")
-            else None
-        )
-        if spec_toml_dir is not None:
-            final_spec = _rebase_toml_file_spec(final_spec, spec_toml_dir)
-        else:
+        #     cwd-relative — "the file is where the user typed the command" (gh #30) —
+        #     so a file spec is absolutized now and a dotted one gets the launch cwd.
+        launch_cwd = Path.cwd()
+        spec_base = cfg.toml_dir_for("agent_spec")
+        if spec_base is None:
+            spec_base = launch_cwd
             final_spec = _absolutize_file_spec(final_spec)
 
         # Apply the resolved workspace as the single source of truth (ADR 0005):
         # publish it (env + active) so the agent's tools can read workspace_root(),
         # and chdir into it (cli is single-process) when one was explicitly
-        # configured. Runs AFTER _absolutize_file_spec so `-a my_agent.py` still
-        # resolves against the invocation cwd, not the workspace (gh #30).
+        # configured. A relative `[workspace] root` from a toml is already resolved
+        # against that toml's directory by core (gh #132).
         apply_workspace(Path(cfg.workspace_root).expanduser(), chdir=workspace_explicit)
 
         # Load the graph with a spinner (both are chrome; quiet mode stays silent
@@ -2675,8 +2683,14 @@ def main(
         # OWN checkpointer. A user-supplied checkpointer always wins (same rule as the
         # #38 in-memory default): we attach our durable per-workspace saver only when the
         # graph has none AND persistence is on. Otherwise restore the #38 behavior below.
+        # On the scriptable path, an agent's import-time print()s go to stderr so the
+        # captured reply is only the reply (gh #136).
         graph, final_graph_name = load_graph(
-            final_spec, final_graph_name_default, attach_default_checkpointer=False
+            final_spec,
+            final_graph_name_default,
+            attach_default_checkpointer=False,
+            base_dir=spec_base,
+            stdout_to_stderr=_QUIET,
         )
         had_user_checkpointer = getattr(graph, "checkpointer", None) is not None
         use_durable = (persist or read_only_resume) and not had_user_checkpointer
@@ -2684,7 +2698,7 @@ def main(
             _ensure_checkpointer(graph)
         if loading:
             loading.stop()
-            print(f"{GREEN}✓{RESET} {DIM}Loaded {final_spec}{RESET}")
+            safe_print(f"{GREEN}✓{RESET} {DIM}Loaded {final_spec}{RESET}")
 
         # --verify: preflight the configured agent by running ONE real turn through
         # the shared core primitive (langstage-core >= 1.0.6), then exit on its

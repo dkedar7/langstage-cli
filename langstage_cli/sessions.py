@@ -30,6 +30,8 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from langstage_core.host.config import _global_toml_path
+
 # Env override for the whole sessions directory. Primarily a hermeticity lever (tests
 # point it at a temp dir); a user could also relocate the store with it. Deliberately
 # separate from LANGSTAGE_CONFIG_HOME so pointing it at a temp dir never perturbs config
@@ -41,12 +43,26 @@ _SNIPPET_MAX = 60
 
 def _config_home() -> Path:
     """The LangStage config home — ``LANGSTAGE_CONFIG_HOME`` (then legacy
-    ``DEEPAGENTS_CONFIG_HOME``), else ``~/.langstage``. Mirrors core's own resolution
-    so sessions live beside the config the CLI already reads."""
-    override = os.getenv("LANGSTAGE_CONFIG_HOME") or os.getenv("DEEPAGENTS_CONFIG_HOME")
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / ".langstage"
+    ``DEEPAGENTS_CONFIG_HOME``), else ``~/.langstage``.
+
+    An override is resolved by core's ``_global_toml_path()`` — the same function that
+    locates the global ``config.toml`` — so sessions live beside the config the CLI
+    already reads, and the legacy ``DEEPAGENTS_CONFIG_HOME`` gets core's one-time
+    deprecation notice instead of being honored silently (gh #154). With no override the
+    store stays under ``~/.langstage`` even when only a legacy ``~/.deepagents`` config
+    file exists (sessions are a LangStage-era feature; nothing to migrate)."""
+    if config_home_source() == "default":
+        return Path.home() / ".langstage"
+    return _global_toml_path().parent
+
+
+def config_home_source() -> str:
+    """Which env var (if any) relocates the config home, for ``--show-config``'s
+    ``[source]`` column — a label only; the value is always resolved through core."""
+    for var in ("LANGSTAGE_CONFIG_HOME", "DEEPAGENTS_CONFIG_HOME"):
+        if os.getenv(var):
+            return f"env:{var}"
+    return "default"
 
 
 def sessions_dir() -> Path:

@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.6.32 - 2026-09-24
+
+Adopts langstage-core 1.0.36 (floor raised from 1.0.28). Most of these fixes come from core,
+so every LangStage surface gets them. The CLI deletes its local copies of that logic, and each
+fix below has a regression test that exercises the CLI path.
+
+### Fixed
+- **A file-path agent can import its sibling modules (gh #145).** `-a agent.py:graph` with
+  `from tools import ...` failed `ModuleNotFoundError: No module named 'tools'`, even when run
+  from the agent's own directory. Core now puts the agent file's directory on `sys.path`, the
+  same as `python agent.py`.
+- **A `package.module:graph` spec finds a package in the project directory (gh #141).** It only
+  worked for installed packages. The fallback resolves from the directory you ran the command
+  in (for `-a` / `LANGSTAGE_AGENT_SPEC`) or from the `langstage.toml`'s directory (for
+  `[agent] spec`). An explicit workspace `chdir` does not change that.
+- **An agent attribute that holds a `str` is a clean error (gh #149).** Before, the string's
+  *value* was loaded as a second spec, so `graph = "openai:gpt-4o-mini"` reported
+  `Module 'openai' has no attribute ...`. Now the error is
+  `TypeError: Agent spec '.../my_agent.py:graph' resolved to a str (...), not an agent.`
+- **Import-time `print`s no longer leak into a captured reply (gh #136).** On the piped / `-q` /
+  `-f` path, anything the agent module prints while it is imported goes to stderr, so
+  `answer=$(langstage-cli ...)` captures only the reply.
+- **A relative `[workspace] root` in `langstage.toml` resolves against the toml's directory
+  (gh #132).** It used the cwd. From a subdirectory the agent ran in `sub/<root>`, and the CLI
+  created that stray directory. A relative `[agent] spec` already worked this way (gh #116).
+  Both now come from core.
+- **`--show-config` and `/config` report a malformed `langstage.toml` as MALFORMED (gh #140).**
+  They name the file and the parse error. Before, the output said "no langstage.toml found".
+- **Turn-time agent errors honor `-v` (gh #153).** An exception inside a node or tool printed a
+  one-line `Error: KeyError: ...`, with or without `-v`. Now `-v` prints the full traceback,
+  including the user's file and line. Without `-v`, the error line says
+  `Re-run with -v for the full traceback.`, the same as a load error. `-v` sets
+  `LANGSTAGE_DEBUG` for the turn only. A value you set yourself is left alone.
+- **HITL resumes no longer log `forwardedProps.command.resume is deprecated` or
+  `failed to parse [legacy] resume_input as JSON` (gh #126, #137).** Core resumes over
+  ag-ui-langgraph's standard `RunAgentInput.resume[]`, so neither warning is emitted. The CLI's
+  substring log filter from gh #103 is deleted. It had stopped matching when upstream reworded
+  the message.
+- **A legacy `DEEPAGENTS_CONFIG_HOME` gets its one deprecation note (gh #154).** It moved the
+  session store without any notice. The store location now resolves through core, so the
+  legacy variable prints the same one-time note as every other `DEEPAGENT*` alias.
+- **A message's text renders before its tool call, and each message starts its own block
+  (gh #119).** Core emits a finished message's text before its tool calls. The CLI starts a
+  new block when a content frame's `message_id` changes, so two messages from one node no
+  longer run together (`First.Second.`). A tool result is never appended to an open text line.
+- Output of agent- and config-supplied text (replies, tool previews, HITL labels, error lines,
+  the config diagnostic) goes through `langstage_core.console.safe_print` / `safe_write`.
+  A character the console can't encode is escaped instead of crashing the process.
+- An in-process second run no longer fails with `ValueError: no active connection`. The
+  per-turn durable saver is now bound to a copy of the graph. Before, it was set on the graph
+  object, and a module-level graph cached in `sys.modules` (`--demo`, any `pkg.mod:attr` spec)
+  kept the closed saver.
+
+### Changed
+- A relative path in the **global** `~/.langstage/config.toml` resolves against
+  `~/.langstage/`. This is the same rule as for every TOML file (gh #133, resolved by design).
+  Use `~/...` or an absolute path there. The README documents this.
+
+### Removed
+- `langstage_cli.config.toml_dir_for` and `cli._rebase_toml_file_spec`. Core's
+  `HostConfig.toml_dir_for()` and its TOML-relative path resolution replace them.
+- `cli._DropResumeJSONWarning` / `_quiet_agui_resume_json_warning` / `_AGUI_RESUME_JSON_WARNING`
+  (the gh #103 log filter). Core no longer emits the warning.
+
 ## 0.6.31 - 2026-09-23
 
 ### Security
