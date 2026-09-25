@@ -121,7 +121,8 @@ without you baking a checkpointer into your own graph:
 - `--continue` / `-c` — resume the **most recent** session for this workspace and keep
   going. If there's no prior session, it just starts a fresh one.
 - `--resume <id>` — resume a **specific** session (ids come from `--list-sessions`; a
-  bare `--resume` also lists them). A short prefix works if it's unambiguous.
+  bare `--resume` also lists them). A short prefix works if it's unambiguous; an
+  ambiguous one is an error that lists the sessions it matches.
 - A plain run with no flag starts a **new** session that is still persisted, so it can be
   continued later.
 
@@ -130,7 +131,9 @@ State lives in `~/.langstage/sessions/<workspace-hash>.sqlite` (honoring
 Persistence is on by default — disable it with `--no-persist`, `LANGSTAGE_PERSIST=0`, or
 `[session] persist = false` in `langstage.toml`. A graph that compiles in its **own**
 checkpointer keeps it (yours always wins); the CLI only supplies a durable one when your
-graph has none. A pinned `[configurable] thread_id` now genuinely persists across runs.
+graph has none. Then the CLI's store is not used: `/config` says so, `--list-sessions`
+marks those sessions, and an in-memory checkpointer (`MemorySaver`) gets a note on stderr,
+because nothing it holds survives the run. A pinned `[configurable] thread_id` now genuinely persists across runs.
 
 `--continue` / `--resume` imply persistence over `LANGSTAGE_PERSIST` / `[session] persist`
 (a CLI flag outranks them), but an explicit `--no-persist` on the same command line wins:
@@ -274,7 +277,15 @@ Pass `-q/--quiet` to force the same clean output in a terminal.
 ## Creating Your Own Agent
 
 Your agent file just needs to export a compiled LangGraph graph — `langstage-cli`
-runs **any** `CompiledGraph`. A minimal stdlib example (no extra deps):
+runs **any** `CompiledGraph`. The reply it renders is the graph's `messages` channel.
+A graph whose state has no `messages` (say `{"query", "answer"}`) still runs: the CLI
+prints its final state as JSON, with a note on stderr. A turn with no message and no
+state to show is an error (exit 1), the same verdict `--verify` gives.
+
+A spec's inline `:name` (`app.py:prod`) wins over `-g` / `[agent] graph_name`;
+`--show-config` reports the graph that runs, and a run notes the ignored name.
+
+A minimal stdlib example (no extra deps):
 
 ```python
 # my_agent.py — needs only langgraph (a base dependency)

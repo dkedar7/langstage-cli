@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.6.34 - 2026-09-25
+
+Advertised-not-honored: each diagnostic now matches what the run does. Each fix has a
+regression test (`tests/test_advertised_wave4.py`).
+
+### Fixed
+- **A graph with no `messages` channel no longer gives a silent empty turn (gh #120).**
+  The README says the CLI runs any `CompiledGraph`, but a graph whose state is, say,
+  `{"query", "answer"}` printed nothing and exited 0, while `--verify` failed the same
+  turn. Such a turn now prints the graph's final state (minus `messages`) as JSON, with a
+  note on stderr saying why. A turn with no message and no state to show is an error:
+  `the turn produced no output (0 chars)`, exit 1 in single-shot, the same verdict as
+  `--verify`.
+- **An ambiguous `--resume` prefix says it is ambiguous (gh #124).** A prefix matching
+  two or more sessions reported `no session matching`. It now reports
+  `prefix '<p>' is ambiguous — it matches N sessions (...)` and lists the short ids.
+  `sessions.match_threads()` returns every candidate.
+- **Persistence diagnostics are honest when the agent has its own checkpointer
+  (gh #128).** The CLI's store is never opened for such an agent, yet `--show-config`
+  and `/config` printed its `.sqlite` path and `--list-sessions` listed the run as an
+  ordinary session. Now `/config` reports `sessions_store = not used: the agent has its
+  own checkpointer (<class>)`, `/status` says the same, `--show-config` (which doesn't
+  import the agent) notes the store is unused in that case, `--list-sessions` marks the
+  session, and resuming it prints a note that the CLI stored no history. An in-memory
+  checkpointer (`MemorySaver`) gets a stderr note on each run, since nothing survives it.
+- **`--show-config` reports the graph that runs when the spec names it inline
+  (gh #129).** With `app.py:prod` and `-g staging` (or `[agent] graph_name`),
+  `--show-config` printed `graph_name = staging` while `prod` ran. It now shows
+  `graph_name = prod [spec :prod]` and marks the configured name as ignored; a run
+  prints a one-line note when an explicit `graph_name` is dropped.
+- **A misplaced spec key in `langstage.toml` is named in "No agent specified"
+  (gh #148).** A top-level `spec`, an `[agents]` table or a typo'd `[agent] spce` was
+  ignored, and the run and `--verify` failed with a bare error that pointed at the env
+  var. The error now names the toml it read, lists the unknown keys (core's
+  `config_issues()`), and shows where the spec goes.
+
 ## 0.6.33 - 2026-09-24
 
 Surface-local correctness: single-shot input, the thread a turn runs on, the session

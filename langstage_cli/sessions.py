@@ -143,17 +143,29 @@ def record_session(workspace: Path, thread_id: str, first_message: Optional[str]
     _save_index(workspace, sessions)
 
 
-def touch_session(workspace: Path, thread_id: str, first_message: Optional[str] = None) -> None:
+def touch_session(
+    workspace: Path,
+    thread_id: str,
+    first_message: Optional[str] = None,
+    *,
+    agent_checkpointer: bool = False,
+) -> None:
     """Bump a thread's ``updated`` timestamp (creating the entry if missing).
 
     ``first_message`` fills the snippet only if it is still empty — so the FIRST user
     message of a session sticks, and ``--continue`` orders by real recency of use.
+
+    ``agent_checkpointer`` marks a session whose state lives in the agent's OWN
+    checkpointer, not the CLI's store (``"checkpointer": "agent"``), so the session list
+    and a resume can say the CLI holds no history for it (gh #128).
     """
     sessions = load_index(workspace)
     entry = sessions.get(thread_id)
     now = time.time()
     if entry is None:
         entry = {"created": now, "updated": now, "first_message": _snippet(first_message)}
+        if agent_checkpointer:
+            entry["checkpointer"] = "agent"
         sessions[thread_id] = entry
     else:
         entry["updated"] = now
@@ -177,11 +189,23 @@ def resolve_thread(workspace: Path, ref: str) -> Optional[str]:
     shows short forms). Returns the full id, or ``None`` if it matches nothing / is
     ambiguous.
     """
+    matches = match_threads(workspace, ref)
+    return matches[0] if len(matches) == 1 else None
+
+
+def match_threads(workspace: Path, ref: str) -> List[str]:
+    """Every thread id a ``--resume`` reference could mean: ``[ref]`` for an exact id,
+    else each id starting with ``ref``, most-recently-updated first.
+
+    More than one match is an ambiguous prefix, which the caller reports as such rather
+    than as "no match" (gh #124).
+    """
     sessions = load_index(workspace)
     if ref in sessions:
-        return ref
-    matches = [tid for tid in sessions if tid.startswith(ref)]
-    return matches[0] if len(matches) == 1 else None
+        return [ref]
+    matches = [(tid, e) for tid, e in sessions.items() if tid.startswith(ref)]
+    matches.sort(key=lambda kv: kv[1].get("updated", 0), reverse=True)
+    return [tid for tid, _ in matches]
 
 
 def list_sessions(workspace: Path) -> List[Tuple[str, dict]]:
