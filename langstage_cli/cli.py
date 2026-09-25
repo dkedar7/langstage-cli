@@ -770,6 +770,21 @@ def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
     return file_path, variable_name
 
 
+def spec_inline_graph_name(spec: Optional[str]) -> Optional[str]:
+    """The graph name a spec pins inline (``app.py:prod`` -> ``prod``), else ``None``.
+
+    An inline name wins over ``-g`` / ``[agent] graph_name``. Only a trailing ``:token``
+    with no path separator counts, so a Windows drive-letter colon
+    (``C:\\path\\agent.py``) is not taken for a name.
+    """
+    if not spec or ":" not in spec:
+        return None
+    tail = spec.rpartition(":")[2]
+    if tail and "/" not in tail and "\\" not in tail:
+        return tail
+    return None
+
+
 def load_graph(
     spec: str,
     default_graph_name: str = "graph",
@@ -808,14 +823,10 @@ def load_graph(
     """
     path_or_module = spec
     graph_name = default_graph_name
-    if ":" in spec:
-        head, _, tail = spec.rpartition(":")
-        # Only treat the trailing ':token' as a graph name if it looks like one
-        # — i.e. it has no path separators. This avoids mistaking a Windows
-        # drive-letter colon (e.g. 'C:\path\agent.py') for a name suffix.
-        if tail and "/" not in tail and "\\" not in tail:
-            path_or_module = head
-            graph_name = tail or default_graph_name
+    inline = spec_inline_graph_name(spec)
+    if inline is not None:
+        path_or_module = spec.rpartition(":")[0]
+        graph_name = inline
 
     # Core owns spec import semantics: a file spec's own dir goes on sys.path so the
     # agent can import its siblings (gh #145), a project-local dotted spec falls back to
@@ -879,6 +890,112 @@ def _with_checkpointer(graph: Any, saver: Any) -> Any:
     except Exception:  # noqa: BLE001 - defer to build_agent's clean type validation
         pass
     return graph
+
+
+def _default_agent_path() -> Optional[Path]:
+    """The bundled example agent a source checkout falls back to, or ``None``.
+
+    Only a source checkout ships ``examples/agent.py``; an installed wheel has none, so
+    a run with no spec there fails with "No agent specified".
+    """
+    path = Path(__file__).parent.parent / "examples" / "agent.py"
+    return path if path.exists() else None
+
+
+def _no_agent_toml_hint(cfg: Any, toml_sources: list) -> List[str]:
+    """Lines explaining why a ``langstage.toml`` that was read supplied no spec (gh #148).
+
+    A top-level ``spec``, an ``[agents]`` table or a typo'd ``[agent] spce`` is ignored
+    as an unknown key, and the run failed with a bare "No agent specified" that pointed
+    at the env var. Name the file and the ignored keys instead. Empty when no config
+    file was involved.
+    """
+    try:
+        issues = [
+            i
+            for i in cfg.config_issues()
+            if i.get("kind") in ("unknown_toml_key", "malformed_toml")
+        ]
+    except Exception:  # noqa: BLE001 - a hint must never mask the real error
+        issues = []
+    if not toml_sources and not issues:
+        return []
+    lines = []
+    if toml_sources:
+        read = ", ".join(str(p) for p in toml_sources)
+        lines.append(f"Read {read}, but it has no [agent] spec.")
+    unknown = [i["key"] for i in issues if i.get("kind") == "unknown_toml_key"]
+    if unknown:
+        lines.append(
+            f"  unknown TOML keys (ignored - a typo or wrong table?): {', '.join(unknown)}"
+        )
+    lines.extend(f"  {i['message']}" for i in issues if i.get("kind") == "malformed_toml")
+    lines.append('  The spec goes in the [agent] table:  [agent]  spec = "path/to/agent.py:graph"')
+    return lines
+
+
+def _note_agent_checkpointer(checkpointer: Any) -> None:
+    """Say so when the agent's own checkpointer makes persistence a no-op (gh #128).
+
+    A user-supplied checkpointer wins, so the CLI never opens its session store. With an
+    in-memory one (``compile(checkpointer=MemorySaver())``, as in many examples) nothing
+    survives the process, which ``--continue`` / ``--resume`` would otherwise hide. A
+    durable checkpointer of the agent's own is fine and gets no note.
+    """
+    try:
+        from langgraph.checkpoint.memory import InMemorySaver
+    except ImportError:  # pragma: no cover - langgraph always ships it
+        return
+    if isinstance(checkpointer, InMemorySaver):
+        print(
+            "note: the agent has its own in-memory checkpointer "
+            f"({type(checkpointer).__name__}), so the CLI's session store is not used and "
+            "nothing is kept across runs. Compile the graph without checkpointer= to let "
+            "the CLI persist sessions.",
+            file=sys.stderr,
+        )
+
+
+def _note_dropped_graph_name(cfg: Any, spec: Optional[str]) -> None:
+    """Note an explicit ``-g`` / ``graph_name`` that the spec's inline ``:name`` overrides.
+
+    The inline name wins (documented), but the configured one used to be dropped with
+    no signal (gh #129).
+    """
+    inline = spec_inline_graph_name(spec)
+    source = cfg.sources.get("graph_name", "default")
+    if inline is None or source == "default" or inline == cfg.graph_name:
+        return
+    print(
+        f"note: graph_name '{cfg.graph_name}' ignored ([{source}]): the spec names its "
+        f"graph inline (:{inline}), so graph '{inline}' runs.",
+        file=sys.stderr,
+    )
+
+
+def _reconcile_graph_name(report: str, cfg: Any) -> str:
+    """Rewrite a ``describe()`` report's ``graph_name`` line to the graph that runs.
+
+    ``describe()`` shows the configured ``graph_name``, but a spec with an inline
+    ``:name`` overrides it, so ``--show-config`` named a graph that does not run
+    (gh #129). Show the spec's name, and the configured one as ignored.
+    """
+    inline = spec_inline_graph_name(getattr(cfg, "agent_spec", None))
+    if inline is None or inline == cfg.graph_name:
+        return report
+    source = cfg.sources.get("graph_name", "default")
+    tail = (
+        f"   (graph_name '{cfg.graph_name}' [{source}] ignored: the spec names its graph)"
+        if source != "default"
+        else "   (from the spec's inline :name)"
+    )
+    line = f"  {'graph_name':<16} = {inline:<26} [spec :{inline}]{tail}"
+    return re.sub(r"(?m)^  graph_name\s+=.*$", lambda _m: line, report, count=1)
+
+
+def _describe(cfg: Any, **kwargs: Any) -> str:
+    """``cfg.describe(**kwargs)`` showing the graph that actually runs (gh #129)."""
+    return _reconcile_graph_name(cfg.describe(**kwargs), cfg)
 
 
 def _split_py_file_spec(spec: str) -> Optional[Tuple[str, str]]:
@@ -1568,7 +1685,8 @@ def cmd_status(args: str, context: Dict[str, Any]) -> Optional[str]:
     session_info = config.get("_session_info")
     if isinstance(session_info, dict) and session_info.get("persist"):
         durable = session_info.get("durable")
-        print(f"  {DIM}Persist:{RESET}     on ({'durable' if durable else 'graph checkpointer'})")
+        how = "durable" if durable else "the agent's own checkpointer; CLI store not used"
+        print(f"  {DIM}Persist:{RESET}     on ({how})")
         if session_info.get("store"):
             print(f"  {DIM}Store:{RESET}       {session_info['store']}")
     elif isinstance(session_info, dict) and session_info.get("read_only"):
@@ -1610,8 +1728,10 @@ def _live_resolved_report(config: Dict[str, Any], context: Dict[str, Any]) -> st
         if report is None:
             from langstage_cli.config import CodeConfig
 
-            report = CodeConfig.resolve().describe(
-                omit_keys=_INERT_KEYS, configurable=config.get("configurable") or None
+            report = _describe(
+                CodeConfig.resolve(),
+                omit_keys=_INERT_KEYS,
+                configurable=config.get("configurable") or None,
             )
         if persist_block:
             report += "\n" + persist_block
@@ -1637,7 +1757,7 @@ def _live_resolved_report(config: Dict[str, Any], context: Dict[str, Any]) -> st
     if isinstance(snap_conf, dict) and snap_conf:
         overlaid = {k: live_conf.get(k, v) for k, v in snap_conf.items()}
 
-    report = live_cfg.describe(omit_keys=_INERT_KEYS, configurable=overlaid)
+    report = _describe(live_cfg, omit_keys=_INERT_KEYS, configurable=overlaid)
     if persist_block:
         report += "\n" + persist_block
     return report
@@ -1945,6 +2065,7 @@ async def run_single_turn_agui(
     print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
     start_time = time.time()
     had_error = False
+    produced = False  # any text / reasoning / tool frame / interrupt this turn (gh #120)
     resume = None  # first pass sends the message; later passes carry the decision
 
     while True:
@@ -1967,6 +2088,10 @@ async def run_single_turn_agui(
                     print_chunk(chunk, verbose=verbose)
                     if chunk.get("status") == "error":
                         had_error = True
+                    if chunk.get("status") == "interrupt" or any(
+                        chunk.get(k) for k in _CONTENT_KEYS
+                    ):
+                        produced = True
                     if chunk.get("status") == "interrupt":
                         has_interrupt = True
                         interrupt_data = chunk.get("interrupt", {})
@@ -2003,7 +2128,51 @@ async def run_single_turn_agui(
         else:
             break
 
+    if not had_error and not produced:
+        had_error = not await _render_empty_turn(agent, thread_id)
     return time.time() - start_time, had_error
+
+
+# Chunk keys that carry turn output a user sees (text, reasoning, tool frames).
+_CONTENT_KEYS = ("chunk", "reasoning", "tool_calls", "tool_result", "extraction")
+
+
+async def _render_empty_turn(agent: Any, thread_id: str) -> bool:
+    """A turn completed with no message: show the graph's final state, or fail clearly.
+
+    The CLI renders the ``messages`` channel, so a graph whose state has other keys
+    (``{"query", "answer"}``) produced a blank turn with exit 0 and no diagnostic, while
+    ``--verify`` failed the same turn (gh #120). Print the state's non-``messages``
+    values instead, with a note on stderr saying why. With nothing to show, report the
+    empty turn and return ``False`` so a single-shot run exits 1, as ``--verify`` does.
+    """
+    values: Dict[str, Any] = {}
+    graph = getattr(agent, "graph", None)
+    if graph is not None and hasattr(graph, "aget_state"):
+        try:
+            state = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+            raw = getattr(state, "values", None)
+            if isinstance(raw, dict):
+                values = {k: v for k, v in raw.items() if k != "messages"}
+        except Exception:  # noqa: BLE001 - no state to show: fall through to the error
+            values = {}
+    if values:
+        print(
+            'note: the agent produced no message (langstage-cli renders the "messages" '
+            "channel); showing the graph's final state instead.",
+            file=sys.stderr,
+        )
+        safe_print(json.dumps(values, indent=2, default=str, ensure_ascii=False))
+        return True
+    _status(
+        f"{RED}⏺ Error: the turn produced no output (0 chars): the graph wrote no "
+        f"assistant message.{RESET}"
+    )
+    _status(
+        f'{DIM}langstage-cli renders the "messages" channel; make sure the graph '
+        f"writes to a messages-keyed state.{RESET}"
+    )
+    return False
 
 
 async def _run_turn_persistent(
@@ -2326,19 +2495,41 @@ def _resolve_resume_thread(
     ``--continue`` with nothing to continue notes it and starts fresh; an unknown
     ``--resume`` id is an error (exit 1).
     """
+    thread: Optional[str] = None
     if continue_session:
         thread = sessions.most_recent_thread(workspace)
         if thread is None:
             _status(f"{DIM}⏺ No prior session for this workspace — starting a fresh one.{RESET}")
-        return thread
-    if resume_id is not None:
-        thread = sessions.resolve_thread(workspace, resume_id)
-        if thread is None:
+            return None
+    elif resume_id is not None:
+        matches = sessions.match_threads(workspace, resume_id)
+        if len(matches) > 1:
+            # An ambiguous prefix is not "no match" (gh #124): say so and list them.
+            shown = ", ".join(t[:8] for t in matches[:10])
+            more = f", +{len(matches) - 10} more" if len(matches) > 10 else ""
+            _status(
+                f"{RED}⏺ Error: prefix '{resume_id}' is ambiguous — it matches "
+                f"{len(matches)} sessions ({shown}{more}).{RESET}"
+            )
+            _status(f"{DIM}Use a longer prefix or the full id (see --list-sessions).{RESET}")
+            sys.exit(1)
+        if not matches:
             _status(f"{RED}⏺ Error: no session matching '{resume_id}' for this workspace.{RESET}")
             _status(f"{DIM}Run --list-sessions to see available sessions.{RESET}")
             sys.exit(1)
-        return thread
-    return None
+        thread = matches[0]
+    if (
+        thread is not None
+        and sessions.load_index(workspace).get(thread, {}).get("checkpointer") == "agent"
+    ):
+        # The session's state lives in the agent's own checkpointer (gh #128): the CLI
+        # holds no history for it, so the resume restores only what that checkpointer kept.
+        _status(
+            f"{YELLOW}note: session {thread[:8]} ran on the agent's own checkpointer; "
+            f"the CLI stored no history for it, so this resume restores only what that "
+            f"checkpointer kept (nothing, if it is in-memory).{RESET}"
+        )
+    return thread
 
 
 def _snapshot_session_store(workspace: Path) -> Optional[Path]:
@@ -2452,7 +2643,12 @@ def _sessions_store_source_label() -> str:
     return sessions.config_home_source()
 
 
-def _persist_diagnostic_block(flag: Optional[bool], toml_config: dict, workspace: Path) -> str:
+def _persist_diagnostic_block(
+    flag: Optional[bool],
+    toml_config: dict,
+    workspace: Path,
+    agent_checkpointer: Optional[Any] = None,
+) -> str:
     """Render the session-persistence block appended to the config diagnostic (gh #108).
 
     Session persistence is a headline feature (``--continue``/``--resume``, on by
@@ -2464,6 +2660,11 @@ def _persist_diagnostic_block(flag: Optional[bool], toml_config: dict, workspace
     ``/config`` append this one block so the two can't disagree. The store path is
     computed WITHOUT creating the directory (a read-only diagnostic must have no side
     effects).
+
+    ``agent_checkpointer`` is the loaded agent's OWN checkpointer, when it has one. The
+    CLI then never opens its store, so the block says the store is not used instead of
+    printing a path that is never written (gh #128). ``--show-config`` doesn't import the
+    agent, so it can't know; its store line says the store is unused in that case.
     """
     persist_val = _resolve_persist(flag, toml_config)
     source = _persist_source_label(flag, toml_config)
@@ -2476,9 +2677,16 @@ def _persist_diagnostic_block(flag: Optional[bool], toml_config: dict, workspace
         # sessions_dir() reads env only (no mkdir); build the path by hand so the
         # diagnostic never touches the filesystem the way db_path() would.
         store = sessions.sessions_dir() / f"{sessions.workspace_key(workspace)}.sqlite"
-        lines.append(
-            f"  {'sessions_store':<16} = {str(store):<26} [{_sessions_store_source_label()}]"
-        )
+        if agent_checkpointer is not None:
+            lines.append(
+                f"  {'sessions_store':<16} = not used: the agent has its own checkpointer "
+                f"({type(agent_checkpointer).__name__}), which holds the session state"
+            )
+        else:
+            lines.append(
+                f"  {'sessions_store':<16} = {str(store):<26} [{_sessions_store_source_label()}]"
+                "   (unused if the agent has its own checkpointer)"
+            )
     return "\n".join(lines)
 
 
@@ -2502,7 +2710,14 @@ def _print_sessions(workspace: Path) -> None:
     for tid, entry in rows:
         when = _format_ts(entry.get("updated"))
         first = entry.get("first_message") or f"{DIM}(no message yet){RESET}"
-        print(f"  {CYAN}{tid[:8]}{RESET}  {DIM}{when}{RESET}  {first}")
+        # A session kept by the agent's own checkpointer has no history in the CLI's
+        # store, so it's marked rather than listed as an ordinary resumable one (gh #128).
+        mark = (
+            f"  {DIM}(agent's own checkpointer: no history stored by the CLI){RESET}"
+            if entry.get("checkpointer") == "agent"
+            else ""
+        )
+        print(f"  {CYAN}{tid[:8]}{RESET}  {DIM}{when}{RESET}  {first}{mark}")
     print(f"\n{DIM}Resume with:  langstage-cli --resume <id>  (or -c for the most recent){RESET}\n")
 
 
@@ -2790,7 +3005,8 @@ def main(
         _toml, _ = config_module.load_config()
         _configurable = config_module.get(_toml, "configurable")
         _cfg = config_module.CodeConfig.resolve(toml_start=Path.cwd(), overrides=cli_overrides)
-        _diag = _cfg.describe(
+        _diag = _describe(
+            _cfg,
             omit_keys=_INERT_KEYS,
             configurable=_configurable if isinstance(_configurable, dict) else None,
         )
@@ -2848,7 +3064,8 @@ def main(
         # from --show-config (which runs before apply_workspace). Reuse this snapshot so
         # /config shows the true provenance. (gh #64)
         _snap_configurable = config_module.get(toml_config, "configurable")
-        resolved_config_report = cfg.describe(
+        resolved_config_report = _describe(
+            cfg,
             omit_keys=_INERT_KEYS,
             configurable=_snap_configurable if isinstance(_snap_configurable, dict) else None,
         )
@@ -2899,11 +3116,15 @@ def main(
 
         # If no spec provided, try the default agent
         if not final_spec:
-            default_agent_path = Path(__file__).parent.parent / "examples" / "agent.py"
-            if default_agent_path.exists():
+            default_agent_path = _default_agent_path()
+            if default_agent_path is not None:
                 final_spec = f"{default_agent_path}:agent"
             else:
                 _status(f"{RED}⏺ Error: No agent specified.{RESET}")
+                # A toml was read but its spec sat under an ignored key: say so, instead
+                # of only pointing at the env var (gh #148).
+                for line in _no_agent_toml_hint(cfg, toml_sources):
+                    _status(f"{YELLOW}{line}{RESET}")
                 _status(f"\n{DIM}Usage:{RESET}")
                 _status("  langstage-cli path/to/agent.py:graph")
                 _status("  langstage-cli mypackage.module:agent")
@@ -2953,6 +3174,9 @@ def main(
         )
         had_user_checkpointer = getattr(graph, "checkpointer", None) is not None
         use_durable = (persist or read_only_resume) and not had_user_checkpointer
+        if persist and had_user_checkpointer:
+            _note_agent_checkpointer(graph.checkpointer)
+        _note_dropped_graph_name(cfg, final_spec)
         if not use_durable:
             _ensure_checkpointer(graph)
         if loading:
@@ -3000,7 +3224,10 @@ def main(
         # computed from the SAME (flag, toml, workspace) as --show-config so the two agree
         # byte-for-byte (gh #108). Uses the raw flag (pre-forcing) to match --show-config.
         config_dict["_persist_diagnostic"] = _persist_diagnostic_block(
-            persist_flag, toml_config, workspace
+            persist_flag,
+            toml_config,
+            workspace,
+            agent_checkpointer=graph.checkpointer if had_user_checkpointer else None,
         )
 
         # ---- Resolve the session thread + wire up persistence (gh #102) ----
@@ -3047,7 +3274,12 @@ def main(
                 persist_sqlite_path = sessions.db_path(workspace)
 
             def on_turn(msg: str, thread_id: str) -> None:
-                sessions.touch_session(workspace, thread_id, first_message=msg)
+                sessions.touch_session(
+                    workspace,
+                    thread_id,
+                    first_message=msg,
+                    agent_checkpointer=had_user_checkpointer,
+                )
 
             config_dict["_session_info"] = {
                 "persist": True,
