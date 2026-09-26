@@ -8,6 +8,12 @@
   <img src="assets/header.svg" alt="langstage-cli — the terminal stage for your LangGraph agent" width="100%" />
 </p>
 
+<p align="center">
+  <img src="https://dkedar7.github.io/langstage-docs/assets/demos/cli.gif" alt="Animated demo: langstage-cli streams a tool call and a reasoning reply, then shows the approval menu and resumes" width="800" />
+</p>
+
+<p align="center"><sub>The keyless demo agent (<code>langstage-cli -a langstage_core.demo.tools:graph</code>), recorded by CI against the latest release. <a href="https://dkedar7.github.io/langstage-docs/stages/cli/">Docs for the terminal stage</a></sub></p>
+
 ## Every stage for your LangGraph agent
 
 langstage-cli is the terminal stage of the **LangStage family**: write your agent once — any LangGraph `CompiledGraph` — and run it on every stage with the same spec string (`module:attr` or `path/to/file.py:attr`), the same `langstage.toml` config file, and the same `LANGSTAGE_*` environment variables.
@@ -19,7 +25,7 @@ langstage-cli is the terminal stage of the **LangStage family**: write your agen
 | Terminal | langstage-cli | **you are here** |
 | VS Code | [langstage-vscode](https://github.com/dkedar7/langstage-vscode) | chat participant + stdio sidecar |
 | Reference agent | [langstage-hermes](https://github.com/dkedar7/langstage-hermes) | `LANGSTAGE_AGENT_SPEC=langstage_hermes.agent:graph` on any stage |
-| Shared core | [langstage-core](https://github.com/dkedar7/langstage-core) | typed events + config resolver behind every stage |
+| Shared core | [langstage-core](https://github.com/dkedar7/langstage-core) | AG-UI streaming bridge + config resolver behind every stage |
 
 📖 **Full documentation:** <https://dkedar7.github.io/langstage-docs/>
 
