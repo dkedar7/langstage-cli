@@ -76,7 +76,7 @@ def test_empty_message_arg_errors_instead_of_entering_the_repl(tmp_path, monkeyp
     # Before: "" was taken as no message, so the REPL read "hi" off stdin and ran it
     # (or hung on an open pipe), despite --no-interactive.
     r = CliRunner().invoke(main, ["--demo", "", "--no-interactive"], input="hi\n")
-    assert r.exit_code == 1, r.output
+    assert r.exit_code == 64, r.output  # a bad argument: usage error (ADR 0007)
     assert "MESSAGE is empty" in r.stderr, r.stderr
     assert "You said" not in r.output
 
@@ -84,5 +84,5 @@ def test_empty_message_arg_errors_instead_of_entering_the_repl(tmp_path, monkeyp
 def test_whitespace_message_arg_is_empty_too(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     r = CliRunner().invoke(main, ["--demo", "   ", "--no-interactive"], input="")
-    assert r.exit_code == 1, r.output
+    assert r.exit_code == 64, r.output  # a bad argument: usage error (ADR 0007)
     assert "MESSAGE is empty" in r.stderr, r.stderr
