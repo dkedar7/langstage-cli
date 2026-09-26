@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.35 - 2026-09-25
+
+Deferred-backlog pass. Each fix has a regression test (`tests/test_deferred_pass.py`).
+
+### Fixed
+- **Streamed markdown is styled across token boundaries (gh #160).** The default render
+  ran `render_markdown` on each streamed chunk, so a span split over tokens
+  (`**very` / `important stuff**`) was never styled and the raw `**`, `*`, `` ` `` and
+  `[](...)` showed. Rendering is now per line, the same unit `render_markdown` uses: plain
+  prose still streams token by token, and from the first markdown character on a line
+  the rest of that line is held until the line (or message) ends. The output matches
+  rendering the whole reply at once.
+- **`--help` no longer leaks a backspace byte (gh #158).** The `-a/--agent` spec-format
+  list lacked the blank line Click needs before its `\b` no-rewrap marker, so the list
+  was reflowed and a literal `^H` was printed.
+- **`init` is a message when an agent is named (gh #121).** `langstage-cli --demo "init"`
+  and `-a agent.py "init"` ran the scaffolder instead of sending `init` to the agent.
+  Bare `langstage-cli init` still scaffolds.
+- **`-f` reads non-UTF-8 prompt files (gh #144).** A file saved as Windows "ANSI"
+  (cp1252) failed with a decode error. The file is read as UTF-8 (a BOM is dropped),
+  then the locale's legacy encoding, then cp1252.
+- **`-v` node labels are right with the durable session store (gh #152).** Requires
+  langstage-core 1.0.37, whose node attribution no longer depends on async-checkpoint
+  timing; with 1.0.36 the text before a tool call could be labeled with the tool's node.
+
+### Docs
+- README shows the keyless rich demo, `-a langstage_core.demo.tools:graph`, for seeing
+  tool calls, reasoning and HITL without an API key (gh #143).
+
 ## 0.6.34 - 2026-09-25
 
 Advertised-not-honored: each diagnostic now matches what the run does. Each fix has a

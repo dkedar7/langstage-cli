@@ -64,6 +64,9 @@ This launches an interactive conversation loop with your agent.
 # Keyless demo agent — no API key, no agent of your own
 langstage-cli --demo "Hello"
 
+# Keyless demo of tool calls, reasoning and HITL: say "use a tool", "think" or "ask me"
+langstage-cli -a langstage_core.demo.tools:graph "use a tool"
+
 # Scaffold a runnable starter agent + langstage.toml (then just run it)
 langstage-cli init
 

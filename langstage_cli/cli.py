@@ -715,30 +715,99 @@ def render_markdown(text: str) -> str:
 
     The output is lossless: every character that isn't a markdown delimiter survives.
     """
-    lines = text.split("\n")
     out: List[str] = []
     fence: Optional[str] = None  # the opening fence run while inside a block
-    for line in lines:
-        m = _FENCE_RE.match(line)
-        if fence is None:
-            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
-                fence = m.group(1)
-                out.append(f"{DIM}{line}{RESET}")
-                continue
-            protected: List[Tuple[str, str]] = []
-            out.append(_render_inline(_protect_code_and_escapes(line, protected), (), protected))
-        else:
-            if (
-                m
-                and m.group(1)[0] == fence[0]
-                and len(m.group(1)) >= len(fence)
-                and not m.group(2).strip()
-            ):
-                fence = None
-                out.append(f"{DIM}{line}{RESET}")
-            else:
-                out.append(f"{CYAN}{line}{RESET}" if line else line)
+    for line in text.split("\n"):
+        kind, fence = _md_line_kind(line, fence)
+        out.append(_md_render_piece(line, kind))
     return "\n".join(out)
+
+
+def _md_line_kind(line: str, fence: Optional[str]) -> Tuple[str, Optional[str]]:
+    """Classify one line as ``"fence"``, ``"code"`` or ``"text"``; return the new fence."""
+    m = _FENCE_RE.match(line)
+    if fence is None:
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            return "fence", m.group(1)
+        return "text", None
+    if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
+        return "fence", None
+    return "code", fence
+
+
+def _md_render_piece(piece: str, kind: str) -> str:
+    """Render a line, or part of one, of the given kind."""
+    if kind == "fence":
+        return f"{DIM}{piece}{RESET}"
+    if kind == "code":
+        return f"{CYAN}{piece}{RESET}" if piece else piece
+    protected: List[Tuple[str, str]] = []
+    return _render_inline(_protect_code_and_escapes(piece, protected), (), protected)
+
+
+# Characters that can start markdown in a text line, or end a code block. Until one shows
+# up, a line's tokens render as themselves and can be written straight away.
+_MD_TEXT_SPECIALS = frozenset("*[`\\~")
+_MD_CODE_SPECIALS = frozenset("`~")
+
+
+class _MarkdownStream:
+    """Render a token-streamed reply exactly as ``render_markdown`` would (gh #160).
+
+    Rendering each chunk alone never styled a span that crossed a chunk boundary
+    (``**very`` + `` important stuff**``). ``render_markdown`` styles line by line, so a
+    line is the unit here: tokens are written as they arrive until the line holds a
+    character that could start markdown; from there the rest of the line is held and
+    rendered when the line (or the message) ends. Plain prose still streams per token.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.line = ""  # the current line so far
+        self.emitted = 0  # how much of it is already written
+        self.fence: Optional[str] = None
+
+    def feed(self, text: str) -> str:
+        out: List[str] = []
+        for i, part in enumerate(text.split("\n")):
+            if i:
+                out.append(self._end_line())
+                out.append("\n")
+            holding = self.emitted < len(self.line)
+            self.line += part
+            if holding:
+                continue
+            specials = _MD_CODE_SPECIALS if self.fence else _MD_TEXT_SPECIALS
+            n = next((j for j, ch in enumerate(part) if ch in specials), len(part))
+            if n:
+                out.append(_md_render_piece(part[:n], "code" if self.fence else "text"))
+                self.emitted += n
+        return "".join(out)
+
+    def flush(self) -> str:
+        """End the message: return whatever is held and forget the fence state."""
+        out = self._end_line()
+        self.fence = None
+        return out
+
+    def _end_line(self) -> str:
+        kind, self.fence = _md_line_kind(self.line, self.fence)
+        rest = self.line[self.emitted :]
+        self.line, self.emitted = "", 0
+        return _md_render_piece(rest, kind) if rest else ""
+
+
+# The reply streaming in the default (non-quiet, non-verbose) render.
+_md_stream = _MarkdownStream()
+
+
+def _flush_markdown() -> None:
+    """Write any held markdown of the streaming reply (message end or a non-text event)."""
+    tail = _md_stream.flush()
+    if tail:
+        safe_write(tail, flush=True)
 
 
 def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
@@ -1283,19 +1352,24 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 # a per-chunk marker jammed a `⏺` before every token (gh #34); but a
                 # per-turn-only marker ran two nodes' messages together on one line with
                 # no separator (gh #43). Break + re-mark on a node change.
+                # Markdown is rendered across chunks, not per chunk, so a span that
+                # spans several tokens is still styled (gh #160).
                 if not print_chunk._streaming_text or new_block:
                     if print_chunk._streaming_text:
+                        _flush_markdown()
                         print()  # new message mid-turn — break before the new marker
-                    safe_write(f"{CYAN}⏺{RESET} {render_markdown(text)}")
+                    _md_stream.reset()
+                    safe_write(f"{CYAN}⏺{RESET} {_md_stream.feed(text)}")
                     print_chunk._streaming_node = node
                     print_chunk._streaming_text = True
                 else:
-                    safe_write(render_markdown(text))
+                    safe_write(_md_stream.feed(text))
 
         # Handle tool calls - green tool name
         elif "tool_calls" in chunk:
             if _QUIET:
                 return  # tool chatter is decoration; scriptable output omits it
+            _flush_markdown()
             print_chunk._streaming_text = False  # a non-text event ends the text run
             for tool_call in chunk["tool_calls"]:
                 tool_name = tool_call["name"]
@@ -1310,6 +1384,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         elif "tool_result" in chunk:
             if _QUIET:
                 return  # tool chatter is decoration; scriptable output omits it
+            _flush_markdown()
             if print_chunk._streaming_text:
                 print()  # never glue a result onto the end of a text line (gh #119)
             print_chunk._streaming_text = False
@@ -1318,6 +1393,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             safe_print(f"  {DIM}   ↳ {preview}{RESET}")
 
     elif status == "interrupt":
+        _flush_markdown()
         print_chunk._streaming_text = False
         if _QUIET:
             # The `⚠ Action Required` banner is human-facing decoration — like the
@@ -1358,9 +1434,11 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 _print_approval_preview(args_preview)
 
     elif status == "complete":
+        _flush_markdown()
         print_chunk._streaming_text = False  # turn over; next turn starts a fresh marker
 
     elif status == "error":
+        _flush_markdown()
         print_chunk._streaming_text = False
         error_msg = chunk.get("error", "Unknown error")
         # Keep stdout clean for the pipe; errors go to stderr. (gh #53)
@@ -2063,6 +2141,7 @@ async def run_single_turn_agui(
     from langstage_cli.agui_stream import agui_stream_updates
 
     print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
+    _md_stream.reset()
     start_time = time.time()
     had_error = False
     produced = False  # any text / reasoning / tool frame / interrupt this turn (gh #120)
@@ -2101,6 +2180,7 @@ async def run_single_turn_agui(
         finally:
             if spinner:
                 spinner.stop()
+            _flush_markdown()  # a stream that ends without `complete` keeps no held text
 
         if has_interrupt and interactive:
             resume = handle_interrupt_input(num_pending_actions, is_generic=is_generic_interrupt)
@@ -2452,6 +2532,35 @@ _INIT_TOML = """\
 [agent]
 spec = "my_agent.py:graph"
 """
+
+
+def _read_prompt_file(path: str) -> str:
+    """Read a ``-f`` prompt file: UTF-8 (a BOM is dropped), else the locale's legacy
+    encoding, else cp1252.
+
+    Windows editors still save "ANSI" (cp1252) by default, and a hardcoded UTF-8 read
+    failed the run on the first accented character (gh #144). Bytes the last fallback
+    can't decode are replaced rather than fatal, as the CLI already does for its output.
+    Line endings are normalized to ``\\n``, as a text-mode read would.
+    """
+    import codecs
+    import locale
+
+    data = Path(path).read_bytes()
+    text: Optional[str] = None
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        legacy = locale.getpreferredencoding(False) or ""
+        try:
+            if legacy and codecs.lookup(legacy).name not in ("utf-8", "cp1252"):
+                text = data.decode(legacy)
+        except (LookupError, UnicodeDecodeError):
+            pass
+    if text is None:
+        text = data.decode("cp1252", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
 
 _INIT_AGENT_FILENAME = "my_agent.py"
 _INIT_TOML_FILENAME = "langstage.toml"
@@ -2882,6 +2991,7 @@ def main(
     MESSAGE is an optional input to send to the agent immediately.
 
     Agent spec (-a/--agent) can be:
+
     \b
     - path/to/file.py           (uses default graph name 'graph')
     - path/to/file.py:agent     (specifies graph variable name)
@@ -2945,7 +3055,9 @@ def main(
     # `langstage-cli init` — scaffold a runnable starter agent + langstage.toml, then
     # exit. Handled here (before any agent/config resolution) because init needs
     # neither: it just writes files into the current directory. (gh #104)
-    if message == "init":
+    # An explicit agent (--demo / -a) makes "init" a message for it, not the scaffold
+    # command (gh #121).
+    if message == "init" and not demo and not agent_spec:
         sys.exit(scaffold_init(Path.cwd(), force=force))
 
     # --continue and --resume are mutually exclusive — they name two different threads
@@ -3026,8 +3138,7 @@ def main(
 
         if prompt_file:
             try:
-                with open(prompt_file, "r", encoding="utf-8") as f:
-                    message = f.read().strip()
+                message = _read_prompt_file(prompt_file).strip()
                 if not message:
                     _status(f"{RED}⏺ Error: File '{prompt_file}' is empty{RESET}")
                     sys.exit(1)
