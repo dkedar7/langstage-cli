@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
+from langstage_cli.exit_codes import EXIT_PAUSED, EXIT_USAGE, Command
+
 from langstage_core import apply_workspace, load_agent_spec
 from langstage_core.console import safe_print, safe_write
 from langstage_core.host.config import _env_bool_strict, _warn_malformed_env_value
@@ -1601,7 +1603,8 @@ def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> An
             "Re-run with --no-interactive to auto-approve pending actions.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        # The run is fine but paused on human input: the family "paused" code (ADR 0007).
+        sys.exit(EXIT_PAUSED)
 
     if is_generic:
         # A generic interrupt() asks for an arbitrary value, not tool approval, so
@@ -1614,7 +1617,7 @@ def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> An
         options = ["Provide a response", "Exit"]
         choice = select_option(options, "How would you like to respond?")
         if choice != 0:
-            sys.exit(0)
+            sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
         raw = input(make_prompt("❯", BLUE))
         try:
             return json.loads(raw)
@@ -1646,7 +1649,7 @@ def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> An
             print(f"{RED}⏺ Invalid JSON: {e}{RESET}")
             return {"decisions": [{"type": "reject"} for _ in range(num_actions)]}
     else:
-        sys.exit(0)
+        sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
 
 
 def print_help():
@@ -2830,7 +2833,10 @@ def _print_sessions(workspace: Path) -> None:
     print(f"\n{DIM}Resume with:  langstage-cli --resume <id>  (or -c for the most recent){RESET}\n")
 
 
-@click.command()
+@click.command(
+    cls=Command,
+    epilog="Exit codes: 0 ok, 1 failed, 2 paused on a human-in-the-loop interrupt, 64 usage error.",
+)
 @click.version_option(__version__, "--version", prog_name="langstage-cli")
 @click.argument("message", required=False)
 @click.option(
@@ -3064,12 +3070,12 @@ def main(
     # to resume, so passing both is a contradiction. (gh #102)
     if continue_session and resume_id is not None:
         _status(f"{RED}⏺ Error: --continue and --resume are mutually exclusive{RESET}")
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
 
     if demo:
         if agent_spec:
             _status(f"{RED}⏺ Error: --demo and -a/--agent are mutually exclusive{RESET}")
-            sys.exit(1)
+            sys.exit(EXIT_USAGE)
         # The keyless echo agent shipped with the shared core.
         agent_spec = "langstage_core.demo.stub:graph"
 
@@ -3134,7 +3140,7 @@ def main(
         # Handle -f/--file option: read message from file
         if prompt_file and message is not None:
             _status(f"{RED}⏺ Error: Cannot use both MESSAGE argument and -f/--file option{RESET}")
-            sys.exit(1)
+            sys.exit(EXIT_USAGE)
 
         if prompt_file:
             try:
@@ -3152,7 +3158,7 @@ def main(
             # an empty -f file is rejected.
             if not message.strip():
                 _status(f"{RED}⏺ Error: MESSAGE is empty{RESET}")
-                sys.exit(1)
+                sys.exit(EXIT_USAGE)
 
         # Load TOML configuration (global + project, merged)
         try:

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.36 - 2026-09-25
+
+### Changed
+- **Family exit codes (langstage-core ADR 0007): 0 ok, 1 failed, 2 paused on a HITL
+  interrupt, 64 usage error.** Breaking for scripts that matched the old codes:
+  - click usage errors (unknown option, bad `--stream-mode` choice, a missing `-f` file):
+    `2` -> `64`. `2` now means only "paused".
+  - `--demo` with `-a`, `--continue` with `--resume`, `MESSAGE` with `-f`, and an empty
+    `MESSAGE`: `1` -> `64`.
+  - An approval needed with stdin not a terminal: `1` -> `2`. Choosing **Exit** at the
+    approval prompt: `0` -> `2`. The run is paused on input, not failed or finished.
+  - Unchanged: `0` on success, `1` for no agent, a load error, a turn error or empty turn,
+    a failed `--verify`, an unknown `--resume` id, and a refused `init`.
+- The constants and click command class live in `langstage_cli.exit_codes`; `--help`
+  lists the codes. No new langstage-core requirement.
+
 ## 0.6.35 - 2026-09-25
 
 Deferred-backlog pass. Each fix has a regression test (`tests/test_deferred_pass.py`).

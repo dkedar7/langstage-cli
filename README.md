@@ -277,6 +277,18 @@ cat prompt.txt | langstage-cli --demo
 
 Pass `-q/--quiet` to force the same clean output in a terminal.
 
+### Exit codes
+
+`langstage-cli` uses the exit codes every LangStage command line shares
+([langstage-core ADR 0007](https://github.com/dkedar7/langstage-core/blob/main/docs/adr/0007-family-exit-codes.md)):
+
+| Code | Meaning |
+|---|---|
+| `0` | success: the turn completed, `--verify` passed, `init` wrote its files |
+| `1` | failure: no agent configured, the agent failed to load, the turn errored or produced nothing, `--verify` failed, `--resume` found no session, `init` refused to overwrite |
+| `2` | paused on a human-in-the-loop interrupt: an approval is needed but stdin is not a terminal, or you chose **Exit** at the approval prompt. `--no-interactive` auto-approves instead |
+| `64` | usage error: an unknown option or bad value, `--demo` with `-a`, `--continue` with `--resume`, `MESSAGE` with `-f`, an empty `MESSAGE` |
+
 ## Creating Your Own Agent
 
 Your agent file just needs to export a compiled LangGraph graph — `langstage-cli`
