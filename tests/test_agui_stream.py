@@ -152,7 +152,8 @@ def test_interrupt_resume_continues_the_graph():
     resumed = asyncio.run(go())
     assert not any(c.get("status") == "interrupt" for c in resumed), resumed
     text = "".join(c["chunk"] for c in resumed if "chunk" in c)
-    assert "resolved:" in text and "accept" in text
+    # core 1.0.37 maps the "accept" alias to the canonical "approve" verb.
+    assert "resolved:" in text and "approve" in text
 
 
 def _snapshot_tool_graph():
