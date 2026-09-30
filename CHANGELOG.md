@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.37 - 2026-09-30
+
+### Fixed
+- **A closed stdin is the clean empty-stdin error** (gh #169). With fd 0 closed (`0<&-`, or a
+  runner that spawns the CLI without an stdin) CPython sets `sys.stdin` to `None`, so the
+  single-shot read raised `AttributeError` and printed
+  `Error: AttributeError: 'NoneType' object has no attribute 'read'`. It now reads as empty,
+  like `</dev/null`: `Error: no message on stdin (it was empty)`, exit 1.
+
 ## 0.6.36 - 2026-09-25
 
 ### Changed

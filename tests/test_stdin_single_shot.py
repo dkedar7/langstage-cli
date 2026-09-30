@@ -4,10 +4,15 @@ CliRunner's stdin is a buffer, never a terminal, so ``input=`` is exactly a pipe
 ``</dev/null`` redirect.
 """
 
+import os
+import subprocess
+import sys
+
+import pytest
 from click.testing import CliRunner
 
 from langstage_cli import sessions
-from langstage_cli.cli import main
+from langstage_cli.cli import _read_piped_stdin, main
 
 
 # --- gh #127: piped stdin is ONE message ---
@@ -86,3 +91,29 @@ def test_whitespace_message_arg_is_empty_too(tmp_path, monkeypatch):
     r = CliRunner().invoke(main, ["--demo", "   ", "--no-interactive"], input="")
     assert r.exit_code == 64, r.output  # a bad argument: usage error (ADR 0007)
     assert "MESSAGE is empty" in r.stderr, r.stderr
+
+
+# --- gh #169: a closed stdin (fd 0 closed) is empty stdin, not an AttributeError ---
+
+
+def test_closed_stdin_reads_as_empty(monkeypatch):
+    """With fd 0 closed CPython sets ``sys.stdin`` to None: nothing to send, like
+    ``</dev/null``."""
+    monkeypatch.setattr(sys, "stdin", None)
+    assert _read_piped_stdin() == ""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="closes fd 0 in the child via preexec_fn")
+def test_closed_stdin_is_the_clean_empty_stdin_error(tmp_path):
+    """End to end: ``langstage-cli --demo 0<&-`` gives the documented empty-stdin error."""
+    r = subprocess.run(
+        [sys.executable, "-c", "from langstage_cli.cli import main; main()", "--demo"],
+        preexec_fn=lambda: os.close(0),
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=120,
+    )
+    assert r.returncode == 1, r.stderr
+    assert "no message on stdin" in r.stderr, r.stderr
+    assert "AttributeError" not in r.stderr

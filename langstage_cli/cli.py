@@ -2684,6 +2684,8 @@ def _read_piped_stdin() -> Optional[str]:
     ``None`` means "run the interactive REPL". Tests replace this function to drive the
     REPL through CliRunner, whose stdin is never a terminal.
     """
+    if sys.stdin is None:  # fd 0 closed: CPython sets sys.stdin to None (gh #169)
+        return ""
     if _stdin_is_interactive():
         return None
     try:
