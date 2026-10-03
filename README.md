@@ -298,10 +298,14 @@ Pass `-q/--quiet` to force the same clean output in a terminal.
 ## Creating Your Own Agent
 
 Your agent file just needs to export a compiled LangGraph graph — `langstage-cli`
-runs **any** `CompiledGraph`. The reply it renders is the graph's `messages` channel.
-A graph whose state has no `messages` (say `{"query", "answer"}`) still runs: the CLI
-prints its final state as JSON, with a note on stderr. A turn with no message and no
-state to show is an error (exit 1), the same verdict `--verify` gives.
+runs **any** `CompiledGraph`. Your message goes in as the graph's `messages` input, and
+the reply it renders is the graph's `messages` channel. A graph whose state has no
+`messages` (say `{"query", "answer"}`) doesn't receive your text: a node that reads
+`state["query"]` fails with `KeyError`, and one that tolerates the missing key runs and
+the CLI prints its final state as JSON, with a note on stderr. To drive such a graph from
+the CLI, give it a `messages` channel, or a first node that copies the last message into
+`query`. A turn with no message and no state to show is an error (exit 1), the same
+verdict `--verify` gives.
 
 A spec's inline `:name` (`app.py:prod`) wins over `-g` / `[agent] graph_name`;
 `--show-config` reports the graph that runs, and a run notes the ignored name.
