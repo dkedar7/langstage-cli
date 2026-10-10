@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.38 - 2026-10-10
+
+### Fixed
+- **`NO_COLOR` turns color off in a terminal too** (gh #172). Color was only stripped on
+  the quiet / piped path, so with [`NO_COLOR`](https://no-color.org) set a terminal session
+  still got the colored header box, spinner and prompt. Any non-empty `NO_COLOR` now
+  disables color on every path; an empty one is ignored, per the convention. The layout
+  and spinner stay, and with color off the spinner clears its line with spaces instead of
+  an erase-line escape.
+
 ## 0.6.37 - 2026-09-30
 
 ### Fixed

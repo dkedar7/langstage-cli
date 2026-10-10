@@ -151,7 +151,8 @@ def _stdin_is_interactive(stream=None) -> bool:
 
 
 def _disable_ansi() -> None:
-    """Blank every ANSI constant so nothing colorized reaches a pipe or file.
+    """Blank every ANSI constant so nothing colorized reaches a pipe, a file or a
+    ``NO_COLOR`` terminal (gh #172).
 
     The render helpers reference these as module globals at call time, so
     reassigning them here strips color everywhere without threading a flag
@@ -344,6 +345,8 @@ class Spinner:
         self.start_time = None
         # Whether stop() has already emitted its line-clear. See stop(). (gh #84)
         self._stopped = False
+        # Visible width of the last frame drawn, for the escape-free clear in stop().
+        self._width = 0
 
     def _spin(self):
         """Run the spinner animation with elapsed time display."""
@@ -351,6 +354,7 @@ class Spinner:
             frame = SPINNER_FRAMES[self.frame_idx % len(SPINNER_FRAMES)]
             elapsed = time.time() - self.start_time
             elapsed_str = f"{int(elapsed)}s"
+            self._width = len(f"{frame} {self.message}... {elapsed_str}")
             # Never let a stdout hiccup in this daemon thread crash the run.
             try:
                 print(
@@ -395,8 +399,13 @@ class Spinner:
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.2)
-        # Clear the spinner line
-        print("\r\033[2K", end="", flush=True)
+        # Clear the spinner line. With color off (NO_COLOR, or stdout not a terminal:
+        # _disable_ansi() has blanked RESET), overwrite it with spaces instead of CSI 2K
+        # so that output carries no escape sequence at all. (gh #172)
+        if RESET:
+            print("\r\033[2K", end="", flush=True)
+        else:
+            print("\r" + " " * self._width + "\r", end="", flush=True)
 
 
 def get_terminal_width() -> int:
@@ -3050,14 +3059,16 @@ def main(
     # The gate is `stdin is not a tty`, so a LIVE terminal session (a human typing,
     # stdin IS a tty, no single-shot input) is never auto-quieted and its interactive
     # UX is unchanged; --quiet still forces quiet anywhere. Color is additionally
-    # stripped whenever stdout is not a TTY, matching well-behaved CLIs.
+    # stripped whenever stdout is not a TTY, matching well-behaved CLIs, and whenever
+    # NO_COLOR is set to a non-empty value (https://no-color.org), a live terminal
+    # included. An empty NO_COLOR doesn't count, per the convention. (gh #172)
     _is_tty = _is_a_tty(sys.stdout)
     _stdin_is_tty = _stdin_is_interactive()  # a mintty pty counts; NUL doesn't
     global _QUIET
     _QUIET = quiet or (
         (bool(message or prompt_file) or verify_agent or not _stdin_is_tty) and not _is_tty
     )
-    if _QUIET or not _is_tty:
+    if _QUIET or not _is_tty or os.environ.get("NO_COLOR"):
         _disable_ansi()
 
     # `langstage-cli init` — scaffold a runnable starter agent + langstage.toml, then

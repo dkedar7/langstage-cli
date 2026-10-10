@@ -36,6 +36,13 @@ _ANSI_NAMES = (
 
 
 @pytest.fixture(autouse=True)
+def _no_inherited_no_color(monkeypatch):
+    """Drop a developer's own ``NO_COLOR``: ``main()`` honors it (gh #172), and tests
+    that drive the terminal path expect color on unless they set it themselves."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_cli_global_state():
     saved_quiet = _cli._QUIET
     saved_ansi = {name: getattr(_cli, name) for name in _ANSI_NAMES}
