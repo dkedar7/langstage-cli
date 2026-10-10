@@ -281,7 +281,9 @@ is an MSYS pty pipe rather than a console. `<NUL` counts as empty stdin, not a t
 cat prompt.txt | langstage-cli --demo
 ```
 
-Pass `-q/--quiet` to force the same clean output in a terminal.
+Pass `-q/--quiet` to force the same clean output in a terminal. Set
+[`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off in a terminal
+too; the layout and spinner stay, uncolored.
 
 ### Exit codes
 
