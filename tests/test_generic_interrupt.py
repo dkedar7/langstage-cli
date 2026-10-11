@@ -175,3 +175,64 @@ async def test_generic_interrupt_no_interactive_avoids_the_decisions_envelope():
     assert "Hello, {'decisions'" not in out, out
     # Resumed with an empty value -> `Hello, !` (a value the agent could have asked for).
     assert "Hello, !" in out, out
+
+
+def test_langchain_hitl_middleware_request_is_a_tool_review():
+    # LangChain 1.x's HumanInTheLoopMiddleware (and deepagents' interrupt_on, built on
+    # it) keys the tool `name`, next to `args`. Reading only action/tool sent these
+    # to the generic "Provide a response" menu instead of Approve/Reject.
+    assert _is_generic_interrupt([{"name": "delete_file", "args": {"path": "/tmp/x"}}]) is False
+    # `name` alone is not an ActionRequest: interrupt({"name": "Ada"}) stays generic.
+    assert _is_generic_interrupt([{"name": "Ada"}]) is True
+
+
+async def test_langchain_hitl_middleware_agent_gets_the_approval_menu(monkeypatch):
+    from langchain.agents import create_agent
+    from langchain.agents.middleware import HumanInTheLoopMiddleware
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import tool
+    from langgraph.checkpoint.memory import MemorySaver
+
+    @tool
+    def delete_file(path: str) -> str:
+        """Delete a file."""
+        return f"deleted {path}"
+
+    class FakeModel(FakeMessagesListChatModel):  # finished messages, no token stream
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    model = FakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "delete_file", "args": {"path": "/tmp/x"}, "id": "c1"}],
+            ),
+            AIMessage(content="All done."),
+        ]
+    )
+    graph = create_agent(
+        model,
+        tools=[delete_file],
+        checkpointer=MemorySaver(),
+        middleware=[HumanInTheLoopMiddleware(interrupt_on={"delete_file": True})],
+    )
+    menus = []
+
+    def pick_first(options, prompt="Select an option:"):
+        menus.append(options)
+        return 0
+
+    monkeypatch.setattr(cli, "_is_a_tty", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "select_option", pick_first)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        _elapsed, had_error = await run_single_turn_agui(
+            build_session_agent(graph), "clean up", "t-hitl", interactive=True
+        )
+    out = buf.getvalue()
+
+    assert had_error is False, out
+    assert menus and menus[0][0] == "Approve all actions", menus
+    assert "deleted /tmp/x" in out and "All done." in out, out

@@ -1185,6 +1185,24 @@ def _approval_fields(action: Dict[str, Any], skip: Tuple[str, ...]) -> str:
     return joined if len(joined) <= _APPROVAL_LINE_MAX else "\n".join(parts)
 
 
+def _tool_key(action: Any) -> str | None:
+    """The key naming the tool in a tool-review ``ActionRequest``, or None.
+
+    deepagents and our own demos key it ``action`` (the #69 convention) or the legacy
+    ``tool``. LangChain 1.x's ``HumanInTheLoopMiddleware``, which deepagents'
+    ``interrupt_on`` uses, keys it ``name``, next to an ``args`` dict. ``name`` counts
+    only with ``args``, so a generic ``interrupt({"name": "Ada"})`` stays generic.
+    """
+    if not isinstance(action, dict):
+        return None
+    for key in ("action", "tool"):
+        if action.get(key):
+            return key
+    if action.get("name") and isinstance(action.get("args"), dict):
+        return "name"
+    return None
+
+
 def format_interrupt_request(action: Any) -> Tuple[str, str]:
     """Render one HITL interrupt ``action_request`` to a ``(label, preview)`` pair.
 
@@ -1195,7 +1213,8 @@ def format_interrupt_request(action: Any) -> Tuple[str, str]:
     dropped; one per line when long):
 
     - a deepagents/langchain ``ActionRequest`` (tool name under ``action`` — the
-      convention #69 fixed — or the legacy ``tool`` key) -> tool name + all of its
+      convention #69 fixed — the legacy ``tool`` key, or ``name`` next to ``args``,
+      LangChain's ``HumanInTheLoopMiddleware`` shape) -> tool name + all of its
       ``args`` (not just the first value, gh #146) + any sibling fields (an
       ``action`` label on a generic dict must not hide the rest of it, gh #159);
     - any other dict -> its first human-readable field
@@ -1211,10 +1230,9 @@ def format_interrupt_request(action: Any) -> Tuple[str, str]:
     The preview may span several lines (``\n``-joined); the caller indents them.
     """
     if isinstance(action, dict):
-        for key in ("action", "tool"):
-            tool = action.get(key)
-            if tool:
-                return _approval_text(tool, None), _approval_fields(action, skip=(key,))
+        key = _tool_key(action)
+        if key:
+            return _approval_text(action[key], None), _approval_fields(action, skip=(key,))
         for key in _INTERRUPT_LABEL_KEYS:
             val = action.get(key)
             if isinstance(val, str) and val.strip():
@@ -1261,9 +1279,10 @@ def _is_generic_interrupt(action_requests: List[Any]) -> bool:
     """
     if not action_requests:
         return True
-    return not all(
-        isinstance(a, dict) and (a.get("action") or a.get("tool")) for a in action_requests
-    )
+    # A LangChain HumanInTheLoopMiddleware request ({"name", "args"}) is a tool review
+    # too; reading only action/tool offered "Provide a response" instead of the
+    # approval menu for every agent using LangChain's standard HITL middleware.
+    return not all(_tool_key(a) for a in action_requests)
 
 
 def format_result_preview(result: str) -> str:
