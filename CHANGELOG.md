@@ -1,5 +1,18 @@
 # Changelog
 
+
+## 0.6.40 - 2026-10-11
+
+### Fixed
+- **Agents using LangChain's standard approval middleware get the approval menu.**
+  LangChain 1.x's `HumanInTheLoopMiddleware`, which deepagents' `interrupt_on` is built
+  on, keys each request's tool `name`, next to `args`. The CLI only recognized `action`
+  or `tool`. So it showed the generic "Provide a response" menu instead of Approve /
+  Reject / custom decision, and labelled the request with its description, listing
+  `name=<tool>` as if it were an argument. A request with `name` and `args` is now a
+  tool review, labelled by its tool. `interrupt({"name": "Ada"})`, with no `args`, is
+  still a generic question.
+
 ## 0.6.39 - 2026-10-11
 
 ### Fixed

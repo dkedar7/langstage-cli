@@ -168,3 +168,18 @@ def test_spoofed_label_cannot_forge_a_prompt_line(capsys):
     assert "\x1b[2K" not in out
     # The fake approval text stays on the numbered label line; no line starts with it.
     assert not any(line.startswith("Approve?") for line in out.splitlines()), out
+
+
+def test_langchain_hitl_middleware_request_is_labelled_by_its_tool():
+    # LangChain's HumanInTheLoopMiddleware keys the tool `name`. The label used to be
+    # the description, with `name=issue_refund` listed as if it were an argument.
+    label, preview = format_interrupt_request(
+        {
+            "name": "issue_refund",
+            "args": {"order_id": "NW-1041", "amount": 189},
+            "description": "Refund $189.00 to Priya Raman for NW-1041.",
+        }
+    )
+    assert label == "issue_refund"
+    assert "order_id=NW-1041" in preview and "amount=189" in preview
+    assert "name=" not in preview
