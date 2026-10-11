@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.39 - 2026-10-11
+
+### Fixed
+- **Ctrl-C at the approval menu exits 2, not 0** (gh #174). Ctrl-C at
+  "How would you like to proceed?" exited 0, "the turn completed", though nothing was
+  approved and the run was left paused, so `langstage-cli ... && next-step` ran the next
+  step on an aborted approval. It now exits `2` (paused), the same as choosing **Exit**.
+  Ctrl-C or end of input at the line prompt after the menu does the same. In the REPL,
+  leaving the menu either way now ends with `Goodbye!` instead of vanishing.
+- **A JSON typo at "Provide custom decision (JSON)" no longer sends a reject** (gh #174).
+  Invalid JSON printed the parse error and then sent a reject for every pending action.
+  It now says nothing was sent and asks again. An empty line goes back to the menu.
+
 ## 0.6.38 - 2026-10-10
 
 ### Fixed
