@@ -1549,7 +1549,10 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
                 print(f"    {DIM}{opt}{RESET}")
 
         while True:
-            key = get_key()
+            try:
+                key = get_key()
+            except KeyboardInterrupt:  # Ctrl-C delivered as SIGINT, not as a key
+                key = "ctrl-c"
 
             if key == "up" and selected > 0:
                 selected -= 1
@@ -1558,8 +1561,12 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
             elif key == "enter":
                 break
             elif key == "ctrl-c":
+                # Ctrl-C abandons the prompt the same way the menu's Exit does: nothing
+                # was decided and the turn stays paused on the interrupt, so exit 2
+                # (ADR 0007). It used to exit 0, "turn completed", which let
+                # `langstage-cli ... && next-step` run on an aborted approval (gh #174).
                 print("\033[?25h", end="")  # Show cursor
-                sys.exit(0)
+                sys.exit(EXIT_PAUSED)
 
             # Move cursor up to redraw options
             print(f"\033[{num_options}A", end="")
@@ -1627,7 +1634,7 @@ def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> An
         choice = select_option(options, "How would you like to respond?")
         if choice != 0:
             sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
-        raw = input(make_prompt("❯", BLUE))
+        raw = _approval_input()
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -1640,25 +1647,59 @@ def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> An
         "Exit",
     ]
 
-    choice = select_option(options, "How would you like to proceed?")
+    while True:
+        choice = select_option(options, "How would you like to proceed?")
 
-    if choice == 0:
-        # Approve decision for each pending action
-        return {"decisions": [{"type": "approve"} for _ in range(num_actions)]}
-    elif choice == 1:
-        # Reject decision for each pending action
-        return {"decisions": [{"type": "reject"} for _ in range(num_actions)]}
-    elif choice == 2:
-        print("Enter your decision as JSON (will be applied to all actions):")
-        json_str = input(make_prompt("❯", BLUE)).strip()
-        try:
-            decision = json.loads(json_str)
-            return {"decisions": [decision for _ in range(num_actions)]}
-        except json.JSONDecodeError as e:
-            print(f"{RED}⏺ Invalid JSON: {e}{RESET}")
+        if choice == 0:
+            # Approve decision for each pending action
+            return {"decisions": [{"type": "approve"} for _ in range(num_actions)]}
+        elif choice == 1:
+            # Reject decision for each pending action
             return {"decisions": [{"type": "reject"} for _ in range(num_actions)]}
-    else:
-        sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
+        elif choice == 2:
+            decision = _prompt_custom_decision()
+            if decision is _BACK_TO_MENU:
+                continue  # nothing sent; show the menu again
+            return {"decisions": [decision for _ in range(num_actions)]}
+        else:
+            sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
+
+
+# Returned by _prompt_custom_decision when the user goes back to the menu. A sentinel,
+# not None, because `null` is valid JSON a user could type as a decision.
+_BACK_TO_MENU = object()
+
+
+def _approval_input() -> str:
+    """Read one line at an approval prompt.
+
+    Ctrl-C or end of input here abandons the approval like Ctrl-C at the menu: the
+    turn stays paused on the interrupt, so exit 2 (ADR 0007, gh #174).
+    """
+    try:
+        return input(make_prompt("❯", BLUE))
+    except (KeyboardInterrupt, EOFError):
+        print()
+        sys.exit(EXIT_PAUSED)
+
+
+def _prompt_custom_decision() -> Any:
+    """Read the "Provide custom decision (JSON)" answer.
+
+    Invalid JSON shows the parse error and asks again. It used to send a reject for
+    every pending action, so a typo while editing a call rejected it and resumed the
+    agent (gh #174). An empty line returns ``_BACK_TO_MENU`` and nothing is sent.
+    """
+    print("Enter your decision as JSON (will be applied to all actions):")
+    print(f"{DIM}Press Enter on an empty line to go back to the menu.{RESET}")
+    while True:
+        json_str = _approval_input().strip()
+        if not json_str:
+            return _BACK_TO_MENU
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            print(f"{RED}⏺ Invalid JSON: {e}. Nothing was sent; try again.{RESET}")
 
 
 def print_help():
@@ -2490,8 +2531,16 @@ def run_conversation_loop(
             if not _QUIET:
                 print()  # Space before response
 
-            # Run the agent (AG-UI is the only streaming path since langstage-core 1.0)
-            duration, _ = run_one(user_input)
+            # Run the agent (AG-UI is the only streaming path since langstage-core 1.0).
+            # Leaving at the approval menu (Exit or Ctrl-C) raises SystemExit(2): the
+            # session ends paused, and it ends with the same `Goodbye!` as /quit
+            # instead of vanishing mid-menu (gh #174).
+            try:
+                duration, _ = run_one(user_input)
+            except SystemExit:
+                if not _QUIET:
+                    print_goodbye()
+                raise
             if _QUIET:
                 # Scriptable path (gh #93): cap the streamed reply with a single
                 # newline and emit no `Nms` timing line — exactly what the quiet
