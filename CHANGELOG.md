@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.41 - 2026-10-11
+
+### Changed
+- **Requires langstage-core 1.0.47**, so upgrading langstage-cli picks up two core fixes:
+  - A turn resumed after an approval no longer re-sends what it said before it paused
+    (1.0.46), so that part isn't shown twice.
+  - The agent's own recursion limit is honored (1.0.47). Every agent, deepagents ones
+    included, used to stop with `GraphRecursionError` after 25 steps.
 
 ## 0.6.40 - 2026-10-11
 
