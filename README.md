@@ -71,6 +71,7 @@ This launches an interactive conversation loop with your agent.
 langstage-cli --demo "Hello"
 
 # Keyless demo of tool calls, reasoning and HITL: say "use a tool", "think" or "ask me"
+# ("think" streams its chain of thought, dimmed under "✻ Thinking", before the answer)
 langstage-cli -a langstage_core.demo.tools:graph "use a tool"
 
 # Scaffold a runnable starter agent + langstage.toml (then just run it)
@@ -261,8 +262,8 @@ langstage-cli --verify -a my_agent.py:graph || { echo "agent broken" >&2; exit 1
 ### Scriptable output
 
 A single-shot run (a `MESSAGE` argument or `-f/--file`) prints only the agent's
-reply — no header, spinner, tool chatter, timing, or color — as soon as its output
-is **piped** (stdout isn't a TTY). Errors and diagnostics go to stderr, and so does
+reply — no header, spinner, tool chatter, reasoning, timing, or color — as soon as its
+output is **piped** (stdout isn't a TTY). Errors and diagnostics go to stderr, and so does
 anything your agent module `print`s while it is being imported. The process exits
 non-zero if the turn failed, so a run is safe to capture:
 

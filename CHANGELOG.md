@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.42 - 2026-10-12
+
+### Fixed
+- **Reasoning is shown in the terminal** (gh #178). langstage-core sends a reasoning
+  model's chain of thought (DeepSeek / Qwen / xAI `reasoning_content`, and the keyless
+  demo's `think` turn) as its own `reasoning` frame, but the CLI had nothing that printed
+  it, so only the final answer appeared, with or without `-v`. A terminal turn now shows
+  the reasoning as it streams, dimmed under a `✻ Thinking` label, ahead of the answer.
+  `-v` shows it with a `[node:reasoning]` prefix, next to the `[node]` reply lines. A
+  new stretch of reasoning after text or a tool call gets a label of its own. Control
+  characters in it are escaped, as in the approval preview, so it can't overwrite or
+  forge a line. Quiet and piped output (`-q`, or stdout not a terminal) still print
+  only the reply: reasoning is left out there, like tool calls.
+
 ## 0.6.41 - 2026-10-11
 
 ### Changed

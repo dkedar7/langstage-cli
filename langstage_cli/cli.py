@@ -1142,6 +1142,15 @@ _APPROVAL_LINE_MAX = 100
 _INTERRUPT_LABEL_KEYS = ("description", "question", "message", "prompt")
 
 
+def _escape_controls(text: str, keep: str = "") -> str:
+    """Show every non-printable character escaped (``ESC`` -> ``\\x1b``), except ``keep``.
+
+    Agent-supplied text that the CLI frames itself (an approval preview, a reasoning
+    block) must not move the cursor, recolor the terminal or start a line of its own.
+    """
+    return "".join(ch if ch.isprintable() or ch in keep else repr(ch)[1:-1] for ch in text)
+
+
 def _approval_text(value: Any, limit: Optional[int] = _APPROVAL_VALUE_MAX) -> str:
     """One field of the approval preview as a single, escaped, length-capped line.
 
@@ -1157,7 +1166,7 @@ def _approval_text(value: Any, limit: Optional[int] = _APPROVAL_VALUE_MAX) -> st
             text = str(value)
     else:
         text = str(value)
-    text = "".join(ch if ch.isprintable() else repr(ch)[1:-1] for ch in text)
+    text = _escape_controls(text)
     if limit is not None and len(text) > limit:
         return text[:limit] + "..."
     return text
@@ -1285,6 +1294,50 @@ def _is_generic_interrupt(action_requests: List[Any]) -> bool:
     return not all(_tool_key(a) for a in action_requests)
 
 
+# Indent of a reasoning block's lines, so they sit under its label (gh #178).
+_REASONING_INDENT = "  "
+
+
+def _reasoning_text(delta: str) -> str:
+    """One reasoning delta, escaped and indented for the terminal (gh #178).
+
+    Reasoning gets the approval preview's escaping: a carriage return, ANSI escape or
+    other control character is shown escaped, so it can't move the cursor, end the dim
+    style or overwrite a line. Line breaks (and tabs) are kept, since a chain of thought
+    runs over many lines, but every new line is indented under the block, so no line
+    of reasoning starts at column 0 the way a prompt or a ``⏺`` reply does.
+    """
+    text = _escape_controls(delta.replace("\r\n", "\n"), keep="\n\t")
+    return text.replace("\n", "\n" + _REASONING_INDENT)
+
+
+def _print_reasoning(chunk: Dict[str, Any], verbose: bool) -> None:
+    """Render a ``reasoning`` frame: a reasoning model's chain of thought (gh #178).
+
+    It is not the answer, so it is shown dim, under its own label, ahead of the answer
+    it leads to: ``✻ Thinking`` with the text indented below it, or under ``-v`` a
+    ``[node:reasoning]`` prefix in the style of the ``[node]`` reply label. Consecutive
+    deltas join into one block. Text, a tool call or a node change ends the block, so a
+    later stretch of reasoning gets a label of its own.
+    """
+    text = chunk.get("reasoning") or ""
+    if not text:
+        return
+    node = chunk.get("node") or "unknown"
+    if not print_chunk._streaming_reasoning or print_chunk._reasoning_node != node:
+        _flush_markdown()
+        if print_chunk._streaming_text or print_chunk._streaming_reasoning:
+            print()  # end the open line; the block starts on its own
+        print_chunk._streaming_text = False  # the answer after it gets a fresh marker
+        if verbose:
+            safe_write(f"{DIM}[{node}:reasoning]{RESET} ")
+        else:
+            safe_write(f"{DIM}✻ Thinking{RESET}\n{_REASONING_INDENT}")
+        print_chunk._streaming_reasoning = True
+        print_chunk._reasoning_node = node
+    safe_write(f"{DIM}{_reasoning_text(text)}{RESET}", flush=True)
+
+
 def format_result_preview(result: str) -> str:
     """Format a result preview with line count indicator."""
     if not result:
@@ -1362,6 +1415,9 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 print_chunk._streaming_node = node
                 print_chunk._streaming_text = True
                 return
+            if print_chunk._streaming_reasoning:
+                print()  # end the reasoning block's line; the answer starts its own (gh #178)
+                print_chunk._streaming_reasoning = False
             if verbose:
                 # Print the [node] label ONCE per streamed run — when a text run
                 # starts, or the node changes mid-stream — then append subsequent
@@ -1395,12 +1451,19 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
                 else:
                     safe_write(_md_stream.feed(text))
 
+        # Reasoning-model chain of thought, dim and labelled ahead of the answer (gh #178)
+        elif "reasoning" in chunk:
+            if _QUIET:
+                return  # not the reply: scriptable output omits it, like tool chatter
+            _print_reasoning(chunk, verbose)
+
         # Handle tool calls - green tool name
         elif "tool_calls" in chunk:
             if _QUIET:
                 return  # tool chatter is decoration; scriptable output omits it
             _flush_markdown()
             print_chunk._streaming_text = False  # a non-text event ends the text run
+            print_chunk._streaming_reasoning = False  # the "\n● name" below ends its line
             for tool_call in chunk["tool_calls"]:
                 tool_name = tool_call["name"]
                 args = tool_call.get("args", {})
@@ -1415,9 +1478,10 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             if _QUIET:
                 return  # tool chatter is decoration; scriptable output omits it
             _flush_markdown()
-            if print_chunk._streaming_text:
+            if print_chunk._streaming_text or print_chunk._streaming_reasoning:
                 print()  # never glue a result onto the end of a text line (gh #119)
             print_chunk._streaming_text = False
+            print_chunk._streaming_reasoning = False
             result = chunk.get("tool_result", "")
             preview = format_result_preview(str(result))
             safe_print(f"  {DIM}   ↳ {preview}{RESET}")
@@ -1425,6 +1489,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
     elif status == "interrupt":
         _flush_markdown()
         print_chunk._streaming_text = False
+        print_chunk._streaming_reasoning = False
         if _QUIET:
             # The `⚠ Action Required` banner is human-facing decoration — like the
             # tool-call / tool-result chatter above, the scriptable path omits it so
@@ -1466,10 +1531,12 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
     elif status == "complete":
         _flush_markdown()
         print_chunk._streaming_text = False  # turn over; next turn starts a fresh marker
+        print_chunk._streaming_reasoning = False
 
     elif status == "error":
         _flush_markdown()
         print_chunk._streaming_text = False
+        print_chunk._streaming_reasoning = False
         error_msg = chunk.get("error", "Unknown error")
         # Keep stdout clean for the pipe; errors go to stderr. (gh #53)
         out = sys.stderr if _QUIET else sys.stdout
@@ -1496,6 +1563,10 @@ print_chunk._streaming_text = False
 print_chunk._streaming_node = None
 # The message_id of the text run in progress: a change is a message boundary (gh #119).
 print_chunk._streaming_message_id = None
+# Whether a reasoning block is open (its label printed, its line not yet ended), and the
+# node it belongs to: a change of node starts a new block (gh #178).
+print_chunk._streaming_reasoning = False
+print_chunk._reasoning_node = None
 
 
 def get_key() -> str:
@@ -2213,6 +2284,7 @@ async def run_single_turn_agui(
     from langstage_cli.agui_stream import agui_stream_updates
 
     print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
+    print_chunk._streaming_reasoning = False
     _md_stream.reset()
     start_time = time.time()
     had_error = False
@@ -2999,7 +3071,7 @@ def _print_sessions(workspace: Path) -> None:
     is_flag=True,
     default=False,
     help="Scriptable single-shot output: suppress the header, spinner, tool "
-    "chatter, timing, and color, and emit only the agent's reply. Auto-enabled "
+    "chatter, reasoning, timing, and color, and emit only the agent's reply. Auto-enabled "
     "when a single-shot run is piped (stdout is not a TTY).",
 )
 @click.option(
