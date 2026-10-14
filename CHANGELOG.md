@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.43 - 2026-10-14
+
+### Security
+- **Tool calls and tool results can no longer drive the terminal** (gh #180). The tool
+  name (`● name`), the argument preview (`└─`) and the result preview (`↳`) were
+  printed raw, so escape, carriage-return or OSC bytes in a tool argument or a tool
+  result (a fetched page, a file, an MCP response) reached the terminal live: they could
+  clear the screen, erase a line and print a forged `✓ Approved by policy` in its
+  place, or set the window title. These lines now show control characters escaped
+  (`\x1b`, `\r`), as the approval preview and the reasoning block already do,
+  in the default and `-v` views. Text is escaped before it is truncated, so cutting a
+  long argument can no longer leave half an escape sequence open. A turn error (and its
+  `-v` traceback) and the `/history` view, which can quote tool output, are escaped
+  the same way; their line breaks are kept. Ordinary text, including non-ASCII, is
+  unchanged. Quiet and piped output still print only the reply.
+
 ## 0.6.42 - 2026-10-12
 
 ### Fixed

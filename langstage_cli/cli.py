@@ -1122,11 +1122,15 @@ def _absolutize_file_spec(spec: str) -> str:
 
 
 def get_tool_arg_preview(args: Dict[str, Any]) -> str:
-    """Get a preview of the first argument value (nanocode style)."""
+    """Get a preview of the first argument value (nanocode style).
+
+    The value is escaped before it is truncated, so a tool arg can't move the cursor
+    or retitle the terminal, and a cut can't leave half an escape sequence live (gh #180).
+    """
     if not args:
         return ""
     # Get first value
-    first_val = str(list(args.values())[0])
+    first_val = _escape_controls(str(list(args.values())[0]))
     # Truncate if needed
     if len(first_val) > 50:
         return first_val[:50] + "..."
@@ -1339,10 +1343,15 @@ def _print_reasoning(chunk: Dict[str, Any], verbose: bool) -> None:
 
 
 def format_result_preview(result: str) -> str:
-    """Format a result preview with line count indicator."""
+    """Format a result preview with line count indicator.
+
+    The first line is escaped before it is cut, so a tool result (a fetched page, a
+    file) can't clear the screen or forge a line the CLI printed (gh #180).
+    """
     if not result:
         return "(empty)"
-    lines = result.split("\n")
+    lines = result.replace("\r\n", "\n").split("\n")
+    lines[0] = _escape_controls(lines[0])
     preview = lines[0][:60]
     if len(lines) > 1:
         preview += f" ... +{len(lines) - 1} lines"
@@ -1465,7 +1474,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             print_chunk._streaming_text = False  # a non-text event ends the text run
             print_chunk._streaming_reasoning = False  # the "\n● name" below ends its line
             for tool_call in chunk["tool_calls"]:
-                tool_name = tool_call["name"]
+                tool_name = _escape_controls(str(tool_call["name"]))  # gh #180
                 args = tool_call.get("args", {})
                 arg_preview = get_tool_arg_preview(args)
 
@@ -1537,7 +1546,8 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         _flush_markdown()
         print_chunk._streaming_text = False
         print_chunk._streaming_reasoning = False
-        error_msg = chunk.get("error", "Unknown error")
+        # An error can quote tool output; show its control bytes escaped (gh #180).
+        error_msg = _escape_controls(str(chunk.get("error", "Unknown error")), keep="\n\t")
         # Keep stdout clean for the pipe; errors go to stderr. (gh #53)
         out = sys.stderr if _QUIET else sys.stdout
         if _QUIET:
@@ -1549,7 +1559,8 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
         # otherwise point at -v.
         tb = chunk.get("traceback")
         if verbose and tb:
-            safe_print(f"{DIM}{tb.rstrip()}{RESET}", file=out)
+            tb = _escape_controls(str(tb).rstrip(), keep="\n\t")
+            safe_print(f"{DIM}{tb}{RESET}", file=out)
         elif not verbose:
             safe_print(f"{DIM}Re-run with -v for the full traceback.{RESET}", file=out)
 
@@ -2116,7 +2127,9 @@ def cmd_history(args: str, context: Dict[str, Any]) -> Optional[str]:
                     else:
                         print(f"\n  {DIM}{role}:{RESET}")
 
-                    # Truncate long content
+                    # A stored tool result is outside content: escape it, then
+                    # truncate (gh #180).
+                    content = _escape_controls(str(content), keep="\n\t")
                     if len(content) > 200:
                         content = content[:200] + "..."
                     safe_print(f"  {DIM}{content}{RESET}")
