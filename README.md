@@ -284,7 +284,9 @@ cat prompt.txt | langstage-cli --demo
 
 Pass `-q/--quiet` to force the same clean output in a terminal. Set
 [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off in a terminal
-too; the layout and spinner stay, uncolored.
+too; the layout and spinner stay, uncolored. With `TERM=dumb` (Emacs shell, `vim :!`)
+the CLI sends no escape sequences at all: no color, a spinner that prints once, and an
+approval menu you answer by typing a number.
 
 ### Exit codes
 

@@ -9,6 +9,8 @@ autouse fixture snapshots and restores that mutable module state around every te
 so invocations stay isolated.
 """
 
+import os
+
 import pytest
 
 from langstage_cli import cli as _cli
@@ -40,16 +42,22 @@ def _no_inherited_no_color(monkeypatch):
     """Drop a developer's own ``NO_COLOR``: ``main()`` honors it (gh #172), and tests
     that drive the terminal path expect color on unless they set it themselves."""
     monkeypatch.delenv("NO_COLOR", raising=False)
+    # Likewise a TERM=dumb shell (Emacs, some CI runners) turns escapes off (gh #182).
+    if os.environ.get("TERM") == "dumb":
+        monkeypatch.setenv("TERM", "xterm-256color")
 
 
 @pytest.fixture(autouse=True)
 def _reset_cli_global_state():
     saved_quiet = _cli._QUIET
+    saved_dumb = _cli._DUMB_TERM
     saved_ansi = {name: getattr(_cli, name) for name in _ANSI_NAMES}
     # Start each test from the interactive default (decorations + color on).
     _cli._QUIET = False
+    _cli._DUMB_TERM = False
     yield
     _cli._QUIET = saved_quiet
+    _cli._DUMB_TERM = saved_dumb
     for name, value in saved_ansi.items():
         setattr(_cli, name, value)
 
