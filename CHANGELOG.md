@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.44 - 2026-10-15
+
+### Fixed
+- **`TERM=dumb` gets plain text** (gh #182). A dumb terminal (Emacs `M-x shell` or
+  `compile`, `vim :!`, serial consoles) shows escape sequences as literal text, but the
+  CLI only checked `NO_COLOR`, so it still sent colors, the redrawn spinner, line clears
+  and cursor hide/show. With `TERM=dumb` it now sends no escape sequences at all: no
+  color, a spinner that prints `Thinking...` once instead of animating, and an approval
+  menu that lists numbered options and takes a typed number (Enter picks the first;
+  Ctrl-C or end of input exits 2, paused, as before). Other terminals are unchanged.
+
 ## 0.6.43 - 2026-10-14
 
 ### Security

@@ -678,7 +678,7 @@ wheels = [
 
 [[package]]
 name = "langstage-cli"
-version = "0.6.43"
+version = "0.6.44"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

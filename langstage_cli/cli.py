@@ -61,6 +61,16 @@ BRIGHT_GREEN, BRIGHT_YELLOW = "\033[92m", "\033[93m"
 # strip ANSI, so the pipe/file receives ONLY the agent's reply. Toggled once in
 # main(); the render helpers below read it as a module global.
 _QUIET = False
+# A dumb terminal (TERM=dumb: Emacs shell/compile, vim :!, serial consoles) shows escape
+# sequences as literal text, so it gets none at all: no color (via _disable_ansi()), no
+# animated spinner, no line clears or cursor hide/show, and a typed-number approval
+# menu instead of the arrow-key one. Set once in main(). (gh #182)
+_DUMB_TERM = False
+
+
+def _is_dumb_term() -> bool:
+    """``TERM=dumb``: the long-standing "this terminal can't do escapes" convention."""
+    return os.environ.get("TERM", "").strip().lower() == "dumb"
 
 
 def _is_a_tty(stream) -> bool:
@@ -298,7 +308,7 @@ def rl_wrap(code: str) -> str:
     This causes issues with line wrapping when using input().
     Wrapping with \\001 and \\002 tells readline to ignore these characters.
     """
-    if HAS_READLINE:
+    if HAS_READLINE and code:
         return f"\001{code}\002"
     return code
 
@@ -368,10 +378,17 @@ class Spinner:
             time.sleep(0.08)
 
     def start(self):
-        """Start the spinner."""
-        self.running = True
+        """Start the spinner. On a dumb terminal it can't redraw a line, so print the
+        message once as a plain line and don't animate (gh #182)."""
         self._stopped = False
         self.start_time = time.time()
+        if _DUMB_TERM:
+            try:
+                print(f"{self.message}...", flush=True)
+            except (UnicodeEncodeError, ValueError):
+                pass
+            return
+        self.running = True
         self.thread = threading.Thread(target=self._spin, daemon=True)
         self.thread.start()
 
@@ -399,6 +416,8 @@ class Spinner:
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.2)
+        if _DUMB_TERM:
+            return  # start() printed a whole line; there is nothing to clear (gh #182)
         # Clear the spinner line. With color off (NO_COLOR, or stdout not a terminal:
         # _disable_ansi() has blanked RESET), overwrite it with spaces instead of CSI 2K
         # so that output carries no escape sequence at all. (gh #172)
@@ -1633,6 +1652,8 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
     Returns:
         Index of selected option (0-based)
     """
+    if _DUMB_TERM:
+        return _select_option_typed(options, prompt)
     selected = 0
     num_options = len(options)
 
@@ -1685,6 +1706,30 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
     finally:
         # Show cursor
         print("\033[?25h", end="")
+
+
+def _select_option_typed(options: List[str], prompt: str) -> int:
+    """The approval menu for a dumb terminal: a numbered list and a typed choice.
+
+    The arrow-key menu redraws itself with cursor-up and line-clear escapes, which a
+    dumb terminal prints as literal text, and editor shells (Emacs ``M-x shell``) send
+    whole lines, not keypresses. Enter alone picks the first option. Ctrl-C or EOF
+    abandons the prompt the same way the arrow-key menu does: exit 2, paused. (gh #182)
+    """
+    print(f"\n{prompt}")
+    for i, opt in enumerate(options, 1):
+        print(f"  {i}. {opt}")
+    while True:
+        try:
+            raw = input(f"Choose 1-{len(options)} [1]: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            sys.exit(EXIT_PAUSED)
+        if not raw:
+            return 0
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return int(raw) - 1
+        print(f"Enter a number from 1 to {len(options)}.")
 
 
 def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> Any:
@@ -3215,13 +3260,17 @@ def main(
     # stripped whenever stdout is not a TTY, matching well-behaved CLIs, and whenever
     # NO_COLOR is set to a non-empty value (https://no-color.org), a live terminal
     # included. An empty NO_COLOR doesn't count, per the convention. (gh #172)
+    # TERM=dumb also strips color, and the spinner and approval menu drop their
+    # escape-driven redraws (gh #182).
     _is_tty = _is_a_tty(sys.stdout)
     _stdin_is_tty = _stdin_is_interactive()  # a mintty pty counts; NUL doesn't
     global _QUIET
     _QUIET = quiet or (
         (bool(message or prompt_file) or verify_agent or not _stdin_is_tty) and not _is_tty
     )
-    if _QUIET or not _is_tty or os.environ.get("NO_COLOR"):
+    global _DUMB_TERM
+    _DUMB_TERM = _is_dumb_term()
+    if _QUIET or not _is_tty or os.environ.get("NO_COLOR") or _DUMB_TERM:
         _disable_ansi()
 
     # `langstage-cli init` — scaffold a runnable starter agent + langstage.toml, then
