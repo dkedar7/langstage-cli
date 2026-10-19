@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.45 - 2026-10-19
+
+### Fixed
+- **The tool-call card shows every argument** (gh #184). It showed only the first
+  argument's value, so `add(a=17, b=25)` rendered as `add └─ 17` and other arguments
+  were dropped, with `-v` too. A tool with several arguments now shows them all by name
+  (`└─ to=alice, amount=1000000, currency=USD`), each value capped at 50 characters.
+  `-v` shows the values in full. A tool with one argument still shows its bare value
+  (`read_file └─ docs/a.md`). Names and values are escaped as before (gh #180).
+
 ## 0.6.44 - 2026-10-15
 
 ### Fixed

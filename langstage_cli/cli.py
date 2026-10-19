@@ -1140,20 +1140,31 @@ def _absolutize_file_spec(spec: str) -> str:
     return f"{Path(path_part).expanduser().resolve()}{suffix}"
 
 
-def get_tool_arg_preview(args: Dict[str, Any]) -> str:
-    """Get a preview of the first argument value (nanocode style).
+# Per-value cap on the tool-call card (default output; ``-v`` shows values in full).
+_TOOL_ARG_VALUE_MAX = 50
 
-    The value is escaped before it is truncated, so a tool arg can't move the cursor
-    or retitle the terminal, and a cut can't leave half an escape sequence live (gh #180).
+
+def get_tool_arg_preview(args: Dict[str, Any], verbose: bool = False) -> str:
+    """The arguments a tool was called with, for the tool-call card.
+
+    A lone argument shows as its bare value (``read_file └─ docs/a.md``). Several show
+    as ``name=value`` pairs, every one of them: showing only the first misstated the
+    call, ``add(a=17, b=25)`` read as "add 17" (gh #184). Each value is capped at 50
+    characters unless ``verbose``. Values are escaped before they are truncated, so a
+    tool arg can't move the cursor or retitle the terminal, and a cut can't leave half
+    an escape sequence live (gh #180).
     """
     if not args:
         return ""
-    # Get first value
-    first_val = _escape_controls(str(list(args.values())[0]))
-    # Truncate if needed
-    if len(first_val) > 50:
-        return first_val[:50] + "..."
-    return first_val
+    limit = None if verbose else _TOOL_ARG_VALUE_MAX
+    if not isinstance(args, dict):
+        return _approval_text(args, limit)
+    if len(args) == 1:
+        (value,) = args.values()
+        return _approval_text(str(value), limit)
+    return ", ".join(
+        f"{_approval_text(str(k), None)}={_approval_text(v, limit)}" for k, v in args.items()
+    )
 
 
 # Per-value cap for the HITL approval preview. Values are truncated, never dropped: the
@@ -1495,7 +1506,7 @@ def print_chunk(chunk: Dict[str, Any], verbose: bool = False):
             for tool_call in chunk["tool_calls"]:
                 tool_name = _escape_controls(str(tool_call["name"]))  # gh #180
                 args = tool_call.get("args", {})
-                arg_preview = get_tool_arg_preview(args)
+                arg_preview = get_tool_arg_preview(args, verbose)
 
                 safe_print(f"\n{GREEN}● {tool_name}{RESET}")
                 if arg_preview:
