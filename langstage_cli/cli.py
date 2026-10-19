@@ -1162,7 +1162,9 @@ def get_tool_arg_preview(args: Dict[str, Any], verbose: bool = False) -> str:
     if len(args) == 1:
         (value,) = args.values()
         return _approval_text(str(value), limit)
-    return ", ".join(f"{_approval_text(str(k), None)}={_approval_text(v, limit)}" for k, v in args.items())
+    return ", ".join(
+        f"{_approval_text(str(k), None)}={_approval_text(v, limit)}" for k, v in args.items()
+    )
 
 
 # Per-value cap for the HITL approval preview. Values are truncated, never dropped: the

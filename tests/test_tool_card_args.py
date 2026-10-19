@@ -41,12 +41,17 @@ def test_values_are_capped_but_never_dropped():
     preview = get_tool_arg_preview({"path": "a.md", "content": long, "mode": "w"})
     assert preview == f"path=a.md, content={'x' * 50}..., mode=w"
     # Structured values read as JSON, not Python reprs.
-    assert get_tool_arg_preview({"ids": [1, 2], "opts": {"k": "v"}}) == 'ids=[1, 2], opts={"k": "v"}'
+    assert (
+        get_tool_arg_preview({"ids": [1, 2], "opts": {"k": "v"}}) == 'ids=[1, 2], opts={"k": "v"}'
+    )
 
 
 def test_verbose_shows_values_in_full():
     long = "y" * 200
-    assert get_tool_arg_preview({"path": "a.md", "content": long}, verbose=True) == f"path=a.md, content={long}"
+    assert (
+        get_tool_arg_preview({"path": "a.md", "content": long}, verbose=True)
+        == f"path=a.md, content={long}"
+    )
     assert get_tool_arg_preview({"q": long}, verbose=True) == long
 
 
@@ -83,8 +88,13 @@ async def test_card_in_a_real_turn(monkeypatch, verbose):
     monkeypatch.setattr(cli, "Spinner", lambda *a, **k: None)
     buf = io.StringIO()
     with redirect_stdout(buf):
-        await run_single_turn_agui(build_session_agent(_transfer_graph()), "pay alice", "t-184",
-                                   interactive=False, verbose=verbose)
+        await run_single_turn_agui(
+            build_session_agent(_transfer_graph()),
+            "pay alice",
+            "t-184",
+            interactive=False,
+            verbose=verbose,
+        )
     plain = _SGR.sub("", buf.getvalue())
     assert "● transfer_funds" in plain, plain
     assert "└─ to=alice, amount=1000000, currency=USD" in plain, plain
