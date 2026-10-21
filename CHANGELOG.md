@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.46 - 2026-10-21
+
+### Fixed
+- **The "No agent specified" hint shows commands that work** (gh #186). Its usage lines
+  left out `-a`, so `langstage-cli path/to/agent.py:graph` (as printed) sent the spec as
+  the message and failed with the same error. They now read `langstage-cli -a ...`, and
+  the hint also names `[agent] spec` in `langstage.toml` and `langstage-cli init`. When
+  the message itself looks like an agent spec, the error says so and prints the command
+  with `-a`.
+
 ## 0.6.45 - 2026-10-19
 
 ### Fixed
