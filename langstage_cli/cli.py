@@ -1001,6 +1001,15 @@ def _default_agent_path() -> Optional[Path]:
     return path if path.exists() else None
 
 
+# A MESSAGE that is really an agent spec: ``my_agent.py:graph`` or ``pkg.module:agent``.
+_SPEC_LIKE = re.compile(r"^(?:(?:[A-Za-z]:)?[^\s:]+\.py|[A-Za-z_][\w.]*):[A-Za-z_]\w*$")
+
+
+def _looks_like_agent_spec(message: Optional[str]) -> bool:
+    """Whether a positional MESSAGE looks like an agent spec meant for ``-a`` (gh #186)."""
+    return bool(message) and bool(_SPEC_LIKE.match(message.strip()))
+
+
 def _no_agent_toml_hint(cfg: Any, toml_sources: list) -> List[str]:
     """Lines explaining why a ``langstage.toml`` that was read supplied no spec (gh #148).
 
@@ -3468,10 +3477,18 @@ def main(
                 # of only pointing at the env var (gh #148).
                 for line in _no_agent_toml_hint(cfg, toml_sources):
                     _status(f"{YELLOW}{line}{RESET}")
+                # The spec went in as the MESSAGE: name the command that works (gh #186).
+                if _looks_like_agent_spec(message):
+                    _status(
+                        f"{YELLOW}The agent spec goes after -a: langstage-cli -a {message.strip()}{RESET}"
+                    )
                 _status(f"\n{DIM}Usage:{RESET}")
-                _status("  langstage-cli path/to/agent.py:graph")
-                _status("  langstage-cli mypackage.module:agent")
-                _status(f"\n{DIM}Or set the LANGSTAGE_AGENT_SPEC environment variable{RESET}")
+                _status("  langstage-cli -a path/to/agent.py:graph")
+                _status("  langstage-cli -a mypackage.module:agent")
+                _status(
+                    f"\n{DIM}Or set LANGSTAGE_AGENT_SPEC, put the spec under [agent] spec in "
+                    f"langstage.toml, or run `langstage-cli init` for a starter agent{RESET}"
+                )
                 sys.exit(1)
 
         # The BASE directory a relative spec resolves against depends on WHERE it came
