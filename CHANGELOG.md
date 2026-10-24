@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.47 - 2026-10-24
+
+### Fixed
+- **Session ids are shown in a form you can tell apart and pass to `--resume`** (gh #188).
+  `--list-sessions` and the ambiguous-prefix error cut every id to 8 characters, so pinned
+  `[configurable] thread_id`s that share a prefix (`project-alpha`, `project-beta`) both
+  showed as `project-`, and the full id was printed nowhere. A pinned id is now shown in
+  full; an id the CLI minted (a UUID) is shown by its shortest unique prefix, 8
+  characters or more. `/status` and the resume notes use the same form.
+- **One Ctrl-C at a typed approval prompt exits 2** (gh #189). At the `TERM=dumb`
+  numbered menu, the free-text reply prompt and the custom-JSON prompt, the first Ctrl-C
+  was swallowed by `asyncio.run`'s SIGINT handler and only a second press exited. The
+  prompts now read with Python's default handler in place, so the first press exits 2
+  (paused), like the arrow-key menu and Ctrl-D.
+
 ## 0.6.46 - 2026-10-21
 
 ### Fixed

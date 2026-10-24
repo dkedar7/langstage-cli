@@ -26,9 +26,10 @@ Two pieces live here:
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from langstage_core.host.config import _global_toml_path
 
@@ -39,6 +40,10 @@ from langstage_core.host.config import _global_toml_path
 _SESSIONS_DIR_ENV = "LANGSTAGE_CLI_SESSIONS_DIR"
 
 _SNIPPET_MAX = 60
+
+# The ids the CLI mints itself (uuid4). Only these are shortened for display.
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_SHORT_ID_MIN = 8
 
 
 def _config_home() -> Path:
@@ -185,8 +190,8 @@ def most_recent_thread(workspace: Path) -> Optional[str]:
 def resolve_thread(workspace: Path, ref: str) -> Optional[str]:
     """Resolve a ``--resume`` reference to a full thread id.
 
-    Accepts an exact id or an unambiguous prefix (ids are UUIDs; ``--list-sessions``
-    shows short forms). Returns the full id, or ``None`` if it matches nothing / is
+    Accepts an exact id or an unambiguous prefix (``--list-sessions`` shows CLI-minted
+    UUIDs in a short form, see ``display_id``). Returns the full id, or ``None`` if it matches nothing / is
     ambiguous.
     """
     matches = match_threads(workspace, ref)
@@ -206,6 +211,24 @@ def match_threads(workspace: Path, ref: str) -> List[str]:
     matches = [(tid, e) for tid, e in sessions.items() if tid.startswith(ref)]
     matches.sort(key=lambda kv: kv[1].get("updated", 0), reverse=True)
     return [tid for tid, _ in matches]
+
+
+def display_id(thread_id: str, others: Iterable[str] = ()) -> str:
+    """How a session id is printed (gh #188).
+
+    A CLI-minted UUID is shortened to its shortest prefix of at least 8 characters
+    that no id in ``others`` shares, like ``git log --abbrev``. Any other id (a pinned
+    ``[configurable] thread_id`` the user named, e.g. ``project-alpha``) is printed in
+    full: such names often share a prefix, and the user has to type one back to
+    ``--resume``. Either form is accepted by ``--resume``.
+    """
+    if not _UUID_RE.match(thread_id):
+        return thread_id
+    rivals = [o for o in others if o != thread_id]
+    n = _SHORT_ID_MIN
+    while n < len(thread_id) and any(o.startswith(thread_id[:n]) for o in rivals):
+        n += 1
+    return thread_id[:n]
 
 
 def list_sessions(workspace: Path) -> List[Tuple[str, dict]]:
