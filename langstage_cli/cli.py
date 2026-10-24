@@ -8,6 +8,7 @@ import copy
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -1741,7 +1742,7 @@ def _select_option_typed(options: List[str], prompt: str) -> int:
         print(f"  {i}. {opt}")
     while True:
         try:
-            raw = input(f"Choose 1-{len(options)} [1]: ").strip()
+            raw = _prompt_line(f"Choose 1-{len(options)} [1]: ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             sys.exit(EXIT_PAUSED)
@@ -1750,6 +1751,25 @@ def _select_option_typed(options: List[str], prompt: str) -> int:
         if raw.isdigit() and 1 <= int(raw) <= len(options):
             return int(raw) - 1
         print(f"Enter a number from 1 to {len(options)}.")
+
+
+def _prompt_line(prompt: str) -> str:
+    """``input()`` at an approval prompt, where one Ctrl-C raises ``KeyboardInterrupt``.
+
+    The approval prompts run inside the turn's ``asyncio.run``, whose SIGINT handler
+    (Python 3.11+) only schedules a task cancel on the first Ctrl-C. A blocking
+    ``input()`` never yields to the loop, so that press was swallowed and only a
+    second one exited (gh #189). The default handler is put back for the duration of
+    the read, so the first press reaches the caller's ``except KeyboardInterrupt``.
+    """
+    try:
+        previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    except ValueError:  # not the main thread: signal handlers can't be changed here
+        return input(prompt)
+    try:
+        return input(prompt)
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> Any:
@@ -1843,7 +1863,7 @@ def _approval_input() -> str:
     turn stays paused on the interrupt, so exit 2 (ADR 0007, gh #174).
     """
     try:
-        return input(make_prompt("❯", BLUE))
+        return _prompt_line(make_prompt("❯", BLUE))
     except (KeyboardInterrupt, EOFError):
         print()
         sys.exit(EXIT_PAUSED)
@@ -1972,7 +1992,8 @@ def cmd_status(args: str, context: Dict[str, Any]) -> Optional[str]:
     print(f"\n{BOLD}{BRIGHT_CYAN}Session Status{RESET}")
     print(f"{DIM}{'─' * 30}{RESET}")
     print(f"  {DIM}Agent:{RESET}       {agent_name}")
-    print(f"  {DIM}Thread ID:{RESET}   {thread_id[:8]}...")
+    shown_id = sessions.display_id(thread_id)
+    print(f"  {DIM}Thread ID:{RESET}   {shown_id}{'...' if shown_id != thread_id else ''}")
     # No "Mode: async/sync" line: since ADR 0003 there is exactly one (async) path,
     # so the value was reporting a distinction the runtime does not have (gh #88).
     print(f"  {DIM}Verbose:{RESET}     {'on' if verbose else 'off'}")
@@ -2844,7 +2865,8 @@ def _resolve_resume_thread(
         matches = sessions.match_threads(workspace, resume_id)
         if len(matches) > 1:
             # An ambiguous prefix is not "no match" (gh #124): say so and list them.
-            shown = ", ".join(t[:8] for t in matches[:10])
+            # Each match in a form --resume accepts and that tells them apart (gh #188).
+            shown = ", ".join(sessions.display_id(t, matches) for t in matches[:10])
             more = f", +{len(matches) - 10} more" if len(matches) > 10 else ""
             _status(
                 f"{RED}⏺ Error: prefix '{resume_id}' is ambiguous — it matches "
@@ -2864,7 +2886,7 @@ def _resolve_resume_thread(
         # The session's state lives in the agent's own checkpointer (gh #128): the CLI
         # holds no history for it, so the resume restores only what that checkpointer kept.
         _status(
-            f"{YELLOW}note: session {thread[:8]} ran on the agent's own checkpointer; "
+            f"{YELLOW}note: session {sessions.display_id(thread)} ran on the agent's own checkpointer; "
             f"the CLI stored no history for it, so this resume restores only what that "
             f"checkpointer kept (nothing, if it is in-memory).{RESET}"
         )
@@ -3048,6 +3070,9 @@ def _print_sessions(workspace: Path) -> None:
         return
     print(f"\n{BOLD}{BRIGHT_CYAN}Sessions{RESET} {DIM}({workspace}){RESET}")
     print(f"{DIM}{'─' * 40}{RESET}")
+    all_ids = [tid for tid, _ in rows]
+    shown = {tid: sessions.display_id(tid, all_ids) for tid in all_ids}
+    width = max(len(s) for s in shown.values())
     for tid, entry in rows:
         when = _format_ts(entry.get("updated"))
         first = entry.get("first_message") or f"{DIM}(no message yet){RESET}"
@@ -3058,7 +3083,9 @@ def _print_sessions(workspace: Path) -> None:
             if entry.get("checkpointer") == "agent"
             else ""
         )
-        print(f"  {CYAN}{tid[:8]}{RESET}  {DIM}{when}{RESET}  {first}{mark}")
+        # A pinned id is shown in full and a minted UUID by its shortest unique prefix, so
+        # two sessions never look alike and each shown id works with --resume (gh #188).
+        print(f"  {CYAN}{shown[tid]:<{width}}{RESET}  {DIM}{when}{RESET}  {first}{mark}")
     print(f"\n{DIM}Resume with:  langstage-cli --resume <id>  (or -c for the most recent){RESET}\n")
 
 
@@ -3602,7 +3629,7 @@ def main(
                 if use_durable:
                     persist_sqlite_path = _snapshot_session_store(workspace)
                 _status(
-                    f"{DIM}⏺ --no-persist: resuming session {session_thread[:8]} read-only — "
+                    f"{DIM}⏺ --no-persist: resuming session {sessions.display_id(session_thread)} read-only — "
                     f"this run will not be saved.{RESET}"
                 )
             if persist_sqlite_path is None and use_durable:
