@@ -28,11 +28,27 @@ EXIT_USAGE = 64
 
 class Command(click.Command):
     """A ``click.Command`` whose usage errors (unknown option, bad choice, a missing
-    ``-f`` file, ...) exit 64 instead of click's 2."""
+    ``-f`` file, ...) exit 64 instead of click's 2.
+
+    It also keeps hidden options out of the "Did you mean" hint for an unknown option.
+    click matches against every option, so a typo was pointed at the deprecated no-op
+    flags hidden from ``--help`` (``--agnet`` -> ``--agui``, gh #193). Those flags still
+    parse; they just aren't suggested."""
 
     def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
         try:
             return super().parse_args(ctx, args)
+        except click.NoSuchOption as exc:
+            hidden = {
+                opt
+                for param in self.params
+                if getattr(param, "hidden", False)
+                for opt in (*param.opts, *param.secondary_opts)
+            }
+            if exc.possibilities:
+                exc.possibilities = [p for p in exc.possibilities if p not in hidden]
+            exc.exit_code = EXIT_USAGE
+            raise
         except click.UsageError as exc:
             exc.exit_code = EXIT_USAGE
             raise

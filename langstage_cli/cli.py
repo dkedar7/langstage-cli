@@ -4,9 +4,11 @@ Styled after Claude Code / nanocode.
 """
 
 import asyncio
+import concurrent.futures
 import copy
 import json
 import os
+import queue
 import re
 import signal
 import subprocess
@@ -1756,7 +1758,7 @@ def _select_option_typed(options: List[str], prompt: str) -> int:
 def _prompt_line(prompt: str) -> str:
     """``input()`` at an approval prompt, where one Ctrl-C raises ``KeyboardInterrupt``.
 
-    The approval prompts run inside the turn's ``asyncio.run``, whose SIGINT handler
+    The approval prompts run inside the turn's ``asyncio.Runner``, whose SIGINT handler
     (Python 3.11+) only schedules a task cancel on the first Ctrl-C. A blocking
     ``input()`` never yields to the loop, so that press was swallowed and only a
     second one exited (gh #189). The default handler is put back for the duration of
@@ -2380,14 +2382,68 @@ async def run_single_turn_agui(
     exception inside a node/tool arrives with its traceback on the error frame and
     ``print_chunk`` shows it (gh #153).
     """
+    start_time = time.time()
+    # A session left paused at an approval (exit 2) re-raises that interrupt when a new
+    # message arrives, and the message is dropped. Resolve the pending approval the way
+    # this run resolves any approval, then send the message (gh #191).
+    if await _pending_interrupt(agent, thread_id):
+        if interactive:
+            note = "answer it first, then your message is sent."
+        else:
+            note = "auto-approving it first (--no-interactive), then your message is sent."
+        _status(
+            f"{YELLOW}⏺ This session is paused at an approval from its previous turn; {note}{RESET}"
+        )
+        try:
+            had_error, produced, saw_interrupt = await _stream_turn(
+                agent, message, thread_id, interactive, verbose
+            )
+        except SystemExit:
+            _status(f"{DIM}⏺ Your message was not sent; the session is still paused.{RESET}")
+            raise
+        if saw_interrupt:  # the pass only answered the old approval
+            if produced:
+                print()  # the previous turn's reply ends; the new message's begins
+            more_error, produced, _ = await _stream_turn(
+                agent, message, thread_id, interactive, verbose
+            )
+            had_error = had_error or more_error
+    else:
+        had_error, produced, _ = await _stream_turn(agent, message, thread_id, interactive, verbose)
+    if not had_error and not produced:
+        had_error = not await _render_empty_turn(agent, thread_id)
+    return time.time() - start_time, had_error
+
+
+async def _pending_interrupt(agent: Any, thread_id: str) -> bool:
+    """Whether the thread is paused on an ``interrupt()`` its last turn raised."""
+    graph = getattr(agent, "graph", None)
+    if not thread_id or graph is None or not hasattr(graph, "aget_state"):
+        return False
+    try:
+        state = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+    except Exception:  # noqa: BLE001 - no checkpointer / no state: nothing is pending
+        return False
+    if getattr(state, "interrupts", None):
+        return True
+    return any(getattr(task, "interrupts", None) for task in getattr(state, "tasks", ()) or ())
+
+
+async def _stream_turn(
+    agent: Any, message: str, thread_id: str, interactive: bool, verbose: bool
+) -> tuple[bool, bool, bool]:
+    """One message through the adapter, answering interrupts until the run ends.
+
+    Returns ``(had_error, produced, saw_interrupt)``.
+    """
     from langstage_cli.agui_stream import agui_stream_updates
 
     print_chunk._streaming_text = False  # fresh marker state per turn (gh #34)
     print_chunk._streaming_reasoning = False
     _md_stream.reset()
-    start_time = time.time()
     had_error = False
     produced = False  # any text / reasoning / tool frame / interrupt this turn (gh #120)
+    saw_interrupt = False
     resume = None  # first pass sends the message; later passes carry the decision
 
     while True:
@@ -2415,7 +2471,7 @@ async def run_single_turn_agui(
                     ):
                         produced = True
                     if chunk.get("status") == "interrupt":
-                        has_interrupt = True
+                        has_interrupt = saw_interrupt = True
                         interrupt_data = chunk.get("interrupt", {})
                         action_requests = interrupt_data.get("action_requests", [])
                         num_pending_actions = len(action_requests) if action_requests else 1
@@ -2451,9 +2507,7 @@ async def run_single_turn_agui(
         else:
             break
 
-    if not had_error and not produced:
-        had_error = not await _render_empty_turn(agent, thread_id)
-    return time.time() - start_time, had_error
+    return had_error, produced, saw_interrupt
 
 
 # Chunk keys that carry turn output a user sees (text, reasoning, tool frames).
@@ -2496,6 +2550,76 @@ async def _render_empty_turn(agent: Any, thread_id: str) -> bool:
         f"writes to a messages-keyed state.{RESET}"
     )
     return False
+
+
+class _DaemonThreadPool(concurrent.futures.ThreadPoolExecutor):
+    """The turn loop's default executor: daemon worker threads nothing waits for (gh #192).
+
+    LangGraph runs sync nodes and tools on the loop's default executor. A stock
+    ``ThreadPoolExecutor`` is joined twice when Ctrl-C ends a turn: ``asyncio.run``
+    shuts the default executor down and waits, and the interpreter joins every pool
+    thread at exit. A cancelled future can't stop a thread, so a hung ``def`` tool kept
+    the process alive after ``Goodbye!``/``Aborted!``. These threads are daemons and
+    ``shutdown`` never joins them, so an abandoned call dies with the process. It
+    subclasses ``ThreadPoolExecutor`` only because ``set_default_executor`` requires one;
+    ``submit`` and ``shutdown`` replace the base pool, whose threads are never started.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(thread_name_prefix="langstage-cli-turn")
+        self._jobs: "queue.SimpleQueue[Any]" = queue.SimpleQueue()
+        self._idle = threading.Semaphore(0)
+        self._workers = 0
+        self._lock = threading.Lock()
+        self._shutdown = False
+
+    def submit(self, fn, /, *args, **kwargs):  # type: ignore[override]
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("cannot schedule new futures after shutdown")
+            future: concurrent.futures.Future = concurrent.futures.Future()
+            self._jobs.put((future, fn, args, kwargs))
+            if not self._idle.acquire(blocking=False):
+                self._workers += 1
+                threading.Thread(target=self._work, name="langstage-cli-turn", daemon=True).start()
+        return future
+
+    def _work(self) -> None:
+        while True:
+            job = self._jobs.get()
+            if job is None:
+                return
+            future, fn, args, kwargs = job
+            if future.set_running_or_notify_cancel():
+                try:
+                    result = fn(*args, **kwargs)
+                except BaseException as exc:  # noqa: BLE001 - delivered to the awaiting task
+                    future.set_exception(exc)
+                else:
+                    future.set_result(result)
+            del job, future, fn, args, kwargs
+            self._idle.release()
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        # Never joins (see the class docstring). Idle workers exit on their sentinel; a
+        # worker still inside a call finishes it, or dies with the process.
+        with self._lock:
+            if self._shutdown:
+                return
+            self._shutdown = True
+            for _ in range(self._workers):
+                self._jobs.put(None)
+
+
+def _run_turn(coro: Any) -> Any:
+    """``asyncio.run`` for one turn, on a loop whose sync work can be abandoned (gh #192).
+
+    Ctrl-C handling is ``asyncio.run``'s own (a cancel, then ``KeyboardInterrupt``); only
+    the executor differs, so a sync tool that is still running no longer holds the exit.
+    """
+    with asyncio.Runner() as runner:
+        runner.get_loop().set_default_executor(_DaemonThreadPool())
+        return runner.run(coro)
 
 
 async def _run_turn_persistent(
@@ -2616,7 +2740,7 @@ def run_conversation_loop(
             # first-message snippet.
             on_turn(msg, thread_id)
         if persist_sqlite_path is not None:
-            return asyncio.run(
+            return _run_turn(
                 _run_turn_persistent(
                     graph,
                     persist_sqlite_path,
@@ -2628,7 +2752,7 @@ def run_conversation_loop(
                     session_config=session_config,
                 )
             )
-        return asyncio.run(run_single_turn_agui(agui_agent, msg, thread_id, interactive, verbose))
+        return _run_turn(run_single_turn_agui(agui_agent, msg, thread_id, interactive, verbose))
 
     # Process initial message if provided
     if initial_message is not None:

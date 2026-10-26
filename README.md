@@ -135,6 +135,9 @@ without you baking a checkpointer into your own graph:
   ambiguous one is an error that lists the sessions it matches.
 - A plain run with no flag starts a **new** session that is still persisted, so it can be
   continued later.
+- A session left paused at an approval (exit `2`) is resolved before a new message: the
+  CLI says so, asks you (or auto-approves under `--no-interactive`), then sends your
+  message. Without a terminal it exits `2` again and says the message was not sent.
 
 State lives in `~/.langstage/sessions/<workspace-hash>.sqlite` (honoring
 `LANGSTAGE_CONFIG_HOME`; override the whole location with `LANGSTAGE_CLI_SESSIONS_DIR`).
