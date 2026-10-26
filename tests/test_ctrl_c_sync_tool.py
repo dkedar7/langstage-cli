@@ -5,8 +5,10 @@ thread pool is joined when ``asyncio.run`` closes and again at interpreter exit,
 Ctrl-C the process waited for the tool, which could be forever. The turn loop's executor
 now uses daemon threads that nothing joins.
 
-Ctrl-C is simulated with ``_thread.interrupt_main(SIGINT)``, fired from inside the tool,
-which runs Python's SIGINT handling exactly as a keypress does, on POSIX and Windows.
+Ctrl-C is a real SIGINT to the process on POSIX, sent from inside the tool.
+``_thread.interrupt_main`` doesn't wake an idle epoll loop, so it can't stand in for a
+keypress there. Windows has no in-process SIGINT, so it uses ``interrupt_main``, which
+the proactor loop does pick up.
 """
 
 import os
@@ -21,7 +23,7 @@ pytest.importorskip("ag_ui_langgraph")
 
 _SLOW = textwrap.dedent(
     '''
-    import _thread, signal, threading, time
+    import _thread, os, signal, threading, time
     from pathlib import Path
     from langchain_core.messages import AIMessage
     from langchain_core.tools import tool
@@ -33,7 +35,11 @@ _SLOW = textwrap.dedent(
     def run_job(seconds: int) -> str:
         """Run a slow job."""
         Path("started").write_text(repr(time.time()))
-        threading.Timer(0.5, lambda: _thread.interrupt_main(signal.SIGINT)).start()
+        if os.name == "posix":
+            press = lambda: os.kill(os.getpid(), signal.SIGINT)
+        else:
+            press = lambda: _thread.interrupt_main(signal.SIGINT)
+        threading.Timer(0.5, press).start()
         time.sleep(seconds)
         return "finished"
 
