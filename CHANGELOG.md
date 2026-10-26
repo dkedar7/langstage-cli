@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.48 - 2026-10-26
+
+### Fixed
+- **A message sent to a session paused at an approval is answered, not dropped** (gh #191).
+  `-c "msg"` or `--resume <id> "msg"` on a session left paused (exit 2) re-raised the old
+  interrupt in the message's place: the message never reached the agent, and
+  `--no-interactive` approved the old action and exited 0 without a word. The CLI now
+  says the session is paused at an approval from its previous turn, resolves it the way
+  this run resolves approvals (the prompt in a terminal, auto-approve under
+  `--no-interactive`), then sends your message. Without a terminal it exits 2 and says
+  the message was not sent. The same applies to the first message typed in a resumed REPL.
+- **Ctrl-C stops a turn while a sync tool or node is running** (gh #192). LangGraph runs
+  `def` tools on the event loop's thread pool, which was joined on the way out, so after
+  Ctrl-C the CLI printed `Goodbye!` (or `Aborted!` only later) and then waited for the
+  tool to return, however long that took. Turns now run on a pool of daemon threads that
+  nothing waits for, so the process exits right away.
+- **A mistyped option no longer suggests a hidden, deprecated flag** (gh #193). `--agnet`
+  offered `--agui` and `--model` offered `--async-mode`/`--sync-mode`, flags kept only so
+  old command lines still parse. Suggestions now come only from options in `--help`.
+
 ## 0.6.47 - 2026-10-24
 
 ### Fixed
