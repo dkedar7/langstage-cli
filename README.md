@@ -138,6 +138,10 @@ without you baking a checkpointer into your own graph:
 - A session left paused at an approval (exit `2`) is resolved before a new message: the
   CLI says so, asks you (or auto-approves under `--no-interactive`), then sends your
   message. Without a terminal it exits `2` again and says the message was not sent.
+- **Provide custom decision (JSON)** at the approval menu takes one decision for every
+  pending action, such as `{"type": "approve"}` or `{"type": "reject", "message": "why"}`
+  (a pasted `{"decisions": [...]}` list also works). The prompt shows the shapes the
+  pending tool allows, and a decision it would refuse is caught before anything is sent.
 
 State lives in `~/.langstage/sessions/<workspace-hash>.sqlite` (honoring
 `LANGSTAGE_CONFIG_HOME`; override the whole location with `LANGSTAGE_CLI_SESSIONS_DIR`).

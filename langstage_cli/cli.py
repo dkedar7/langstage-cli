@@ -1774,7 +1774,9 @@ def _prompt_line(prompt: str) -> str:
         signal.signal(signal.SIGINT, previous)
 
 
-def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> Any:
+def handle_interrupt_input(
+    num_actions: int = 1, is_generic: bool = False, interrupt: Optional[Dict[str, Any]] = None
+) -> Any:
     """
     Handle user input for an interrupt using arrow key navigation, returning the
     value to resume the graph with (the resume payload).
@@ -1783,6 +1785,9 @@ def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> An
         num_actions: Number of pending tool calls that need decisions
         is_generic: True for a generic/scalar ``interrupt(value)`` (gh #99), False
             for a deepagents tool-REVIEW interrupt.
+        interrupt: The interrupt frame's payload (``action_requests``,
+            ``review_configs``, ``allowed_decisions``), used to check a custom decision
+            before it is sent (gh #195).
 
     Returns:
         For a deepagents tool-review interrupt, a ``{"decisions": [...]}`` envelope
@@ -1845,10 +1850,10 @@ def handle_interrupt_input(num_actions: int = 1, is_generic: bool = False) -> An
             # Reject decision for each pending action
             return {"decisions": [{"type": "reject"} for _ in range(num_actions)]}
         elif choice == 2:
-            decision = _prompt_custom_decision()
-            if decision is _BACK_TO_MENU:
+            decisions = _prompt_custom_decision(num_actions, interrupt)
+            if decisions is _BACK_TO_MENU:
                 continue  # nothing sent; show the menu again
-            return {"decisions": [decision for _ in range(num_actions)]}
+            return {"decisions": decisions}
         else:
             sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
 
@@ -1871,23 +1876,143 @@ def _approval_input() -> str:
         sys.exit(EXIT_PAUSED)
 
 
-def _prompt_custom_decision() -> Any:
-    """Read the "Provide custom decision (JSON)" answer.
+def _prompt_custom_decision(
+    num_actions: int = 1, interrupt: Optional[Dict[str, Any]] = None
+) -> Any:
+    """Read the "Provide custom decision (JSON)" answer as a list of decisions.
 
     Invalid JSON shows the parse error and asks again. It used to send a reject for
     every pending action, so a typo while editing a call rejected it and resumed the
-    agent (gh #174). An empty line returns ``_BACK_TO_MENU`` and nothing is sent.
+    agent (gh #174). A decision the interrupt would refuse is caught the same way:
+    once LangGraph has a resume value for an interrupt, a failed resume keeps it and
+    every later answer replays it, so it must be checked before it is sent (gh #195).
+    An empty line returns ``_BACK_TO_MENU`` and nothing is sent.
     """
-    print("Enter your decision as JSON (will be applied to all actions):")
+    print("Enter your decision as JSON (one decision is applied to all actions):")
+    print(f"{DIM}  {_decision_shapes(_allowed_verbs(interrupt, 0), interrupt)}{RESET}")
     print(f"{DIM}Press Enter on an empty line to go back to the menu.{RESET}")
     while True:
         json_str = _approval_input().strip()
         if not json_str:
             return _BACK_TO_MENU
         try:
-            return json.loads(json_str)
+            value = json.loads(json_str)
         except json.JSONDecodeError as e:
             print(f"{RED}⏺ Invalid JSON: {e}. Nothing was sent; try again.{RESET}")
+            continue
+        decisions, problem = _check_custom_decision(value, num_actions, interrupt)
+        if problem is None:
+            return decisions
+        print(f"{RED}⏺ {problem} Nothing was sent; try again.{RESET}")
+
+
+_FALLBACK_VERBS = ("approve", "edit", "reject", "respond")
+
+
+def _allowed_verbs(interrupt: Optional[Dict[str, Any]], index: int) -> List[str]:
+    """The decision verbs the interrupt allows for its ``index``-th action.
+
+    LangChain's HumanInTheLoopMiddleware lists them per tool in ``review_configs``;
+    core also puts the union on the frame as ``allowed_decisions``.
+    """
+    interrupt = interrupt if isinstance(interrupt, dict) else {}
+    requests = interrupt.get("action_requests")
+    configs = interrupt.get("review_configs")
+    if isinstance(requests, list) and isinstance(configs, list) and index < len(requests):
+        key = _tool_key(requests[index])
+        name = requests[index].get(key) if key else None
+        for rc in configs:
+            if isinstance(rc, dict) and rc.get("action_name") == name:
+                verbs = rc.get("allowed_decisions")
+                if isinstance(verbs, list) and verbs:
+                    return [str(v) for v in verbs]
+    verbs = interrupt.get("allowed_decisions")
+    if isinstance(verbs, list) and verbs:
+        return [str(v) for v in verbs]
+    return list(_FALLBACK_VERBS)
+
+
+def _decision_shapes(allowed: List[str], interrupt: Optional[Dict[str, Any]] = None) -> str:
+    """One line showing the JSON shape of each allowed decision.
+
+    The fields are LangChain HumanInTheLoopMiddleware's, so other interrupts get the
+    bare ``{"type": ...}`` of each verb.
+    """
+    shapes = {} if not _is_middleware_interrupt(interrupt) else {
+        "approve": '{"type": "approve"}',
+        "reject": '{"type": "reject", "message": "why"}',
+        "respond": '{"type": "respond", "message": "reply"}',
+        "edit": '{"type": "edit", "edited_action": {"name": "tool", "args": {...}}}',
+    }
+    order = [v for v in _FALLBACK_VERBS if v in allowed] + [
+        v for v in allowed if v not in _FALLBACK_VERBS
+    ]
+    return " | ".join(shapes.get(v, f'{{"type": "{v}"}}') for v in order)
+
+
+def _is_middleware_interrupt(interrupt: Optional[Dict[str, Any]]) -> bool:
+    """Whether the interrupt is LangChain HumanInTheLoopMiddleware's (it has review_configs)."""
+    configs = interrupt.get("review_configs") if isinstance(interrupt, dict) else None
+    return isinstance(configs, list) and bool(configs)
+
+
+def _check_custom_decision(
+    value: Any, num_actions: int, interrupt: Optional[Dict[str, Any]]
+) -> Tuple[List[Any], Optional[str]]:
+    """Check a typed custom decision against the pending interrupt (gh #195).
+
+    Returns ``(decisions, None)`` with one decision per pending action, or
+    ``([], problem)`` naming what is wrong. One decision object applies to every
+    action. A pasted ``{"decisions": [...]}`` envelope (or a bare list) is unwrapped
+    and must hold one decision, or one per action.
+    """
+    from langstage_core import normalize_decision
+
+    if isinstance(value, dict) and "decisions" in value and "type" not in value:
+        value = value["decisions"]
+    if isinstance(value, list):
+        if len(value) == 1:
+            value = value * num_actions
+        elif len(value) != num_actions:
+            return [], (
+                f"Got {len(value)} decisions for {num_actions} pending action(s); "
+                "give one decision, or one per action."
+            )
+        items = value
+    else:
+        items = [value] * num_actions
+
+    # The edited_action / message fields are LangChain HumanInTheLoopMiddleware's
+    # shape (its interrupts carry review_configs); other interrupts read their own.
+    middleware = _is_middleware_interrupt(interrupt)
+    for i, decision in enumerate(items):
+        allowed = _allowed_verbs(interrupt, i)
+        if not isinstance(decision, dict) or not isinstance(decision.get("type"), str):
+            return [], (
+                'A decision is a JSON object with a "type", e.g. {"type": "approve"}; '
+                f"allowed: {', '.join(allowed)}."
+            )
+        verb = normalize_decision(decision["type"], allowed)
+        if verb is None:
+            return [], (
+                f"Decision type '{decision['type']}' is not allowed here; "
+                f"allowed: {', '.join(allowed)}."
+            )
+        if not middleware:
+            continue
+        if verb == "edit":
+            edited = decision.get("edited_action")
+            if not (
+                isinstance(edited, dict)
+                and isinstance(edited.get("name"), str)
+                and isinstance(edited.get("args"), dict)
+            ):
+                return [], 'An edit needs "edited_action": {"name": "<tool>", "args": {...}}.'
+        elif verb == "respond" and not isinstance(decision.get("message"), str):
+            return [], 'A respond decision needs a "message" string.'
+        elif verb == "reject" and not isinstance(decision.get("message", ""), str):
+            return [], 'The "message" of a reject decision must be a string.'
+    return list(items), None
 
 
 def print_help():
@@ -2429,6 +2554,36 @@ async def _pending_interrupt(agent: Any, thread_id: str) -> bool:
     return any(getattr(task, "interrupts", None) for task in getattr(state, "tasks", ()) or ())
 
 
+async def _discard_failed_resume(agent: Any, thread_id: str) -> None:
+    """Drop the answer a failed resume left on the thread, so the next one is used.
+
+    When resuming an interrupt raises (a decision the agent refused), LangGraph keeps
+    that resume value on the checkpoint and replays it on every later resume, so the
+    approval could never be answered again, even with ``-c`` (gh #195). The failed
+    task still shows its interrupt and carries the error. A checkpoint with no new
+    values drops the stale answer: the interrupted step runs again and takes the new
+    one. If that isn't possible the stale answer stays, and the error says so again.
+    """
+    graph = getattr(agent, "graph", None)
+    if not thread_id or graph is None or not hasattr(graph, "aupdate_state"):
+        return
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        state = await graph.aget_state(config)
+    except Exception:  # noqa: BLE001 - no checkpointer / no state: nothing to clear
+        return
+    tasks = getattr(state, "tasks", ()) or ()
+    if not any(getattr(t, "interrupts", None) and getattr(t, "error", None) for t in tasks):
+        return
+    try:
+        await graph.aupdate_state(config, None)
+    except Exception as e:  # noqa: BLE001 - leave the thread as it is
+        _status(
+            f"{YELLOW}⏺ Couldn't clear the refused answer on this session ({e}); "
+            f"start a new session if the approval keeps failing.{RESET}"
+        )
+
+
 async def _stream_turn(
     agent: Any, message: str, thread_id: str, interactive: bool, verbose: bool
 ) -> tuple[bool, bool, bool]:
@@ -2456,6 +2611,8 @@ async def _stream_turn(
         spinner = None if _QUIET else Spinner("Thinking")
         if spinner:
             spinner.start()
+        if resume is not None:
+            await _discard_failed_resume(agent, thread_id)
         try:
             with _debug_tracebacks(verbose):
                 async for chunk in agui_stream_updates(agent, message, thread_id, resume=resume):
@@ -2482,7 +2639,9 @@ async def _stream_turn(
             _flush_markdown()  # a stream that ends without `complete` keeps no held text
 
         if has_interrupt and interactive:
-            resume = handle_interrupt_input(num_pending_actions, is_generic=is_generic_interrupt)
+            resume = handle_interrupt_input(
+                num_pending_actions, is_generic=is_generic_interrupt, interrupt=interrupt_data
+            )
         elif has_interrupt and is_generic_interrupt:
             # --no-interactive on a generic interrupt() (gh #99): there is no action
             # to "approve", and resuming with a {"decisions": [...]} envelope would

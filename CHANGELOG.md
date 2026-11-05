@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.49 - 2026-11-05
+
+### Fixed
+- **A mistyped custom approval decision no longer wedges the session** (gh #195).
+  "Provide custom decision (JSON)" sent any valid JSON. When the agent refused it (a typo
+  like `{"type": "aprove"}`, or the whole `{"decisions": [...]}` envelope), LangGraph kept
+  that answer on the thread and replayed it on every later resume, so "Approve all
+  actions" failed with the same error forever, and `-c --no-interactive` exited 1. The
+  decision is now checked against the interrupt before it is sent: its `type` must be
+  one the pending tool allows, and for LangChain's HumanInTheLoopMiddleware an edit
+  needs `edited_action` and a respond needs a `message`. A refused decision says what is
+  allowed and asks again with nothing sent. A pasted envelope is unwrapped (one decision,
+  or one per action), and the prompt shows the allowed shapes.
+- **A session already holding a refused answer recovers.** Before a resume, a thread
+  whose interrupted step failed on its last answer gets a checkpoint with no new values,
+  which drops the stale answer: the step runs again and takes the new one. A session
+  wedged by an older version is answered normally on the next `-c`.
+
 ## 0.6.48 - 2026-10-26
 
 ### Fixed
