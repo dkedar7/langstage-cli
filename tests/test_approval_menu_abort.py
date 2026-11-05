@@ -181,13 +181,16 @@ def test_empty_line_then_approve_sends_only_the_approval(tty, monkeypatch):
     assert resume == {"decisions": [{"type": "approve"}]}
 
 
-def test_json_null_is_a_decision_not_back_to_menu(tty, monkeypatch):
-    # The "go back" signal is an empty line, so valid JSON like `null` still resumes.
+def test_json_null_is_refused_not_back_to_menu(tty, monkeypatch):
+    # The "go back" signal is an empty line. Valid JSON like `null` isn't a decision,
+    # so it is refused in place with nothing sent (gh #195).
     shown = _choices(monkeypatch, 2)
-    _typed(monkeypatch, "null")
-    with redirect_stdout(io.StringIO()):
+    _typed(monkeypatch, "null", '{"type": "approve"}')
+    buf = io.StringIO()
+    with redirect_stdout(buf):
         resume = cli.handle_interrupt_input(1)
-    assert resume == {"decisions": [None]}
+    assert resume == {"decisions": [{"type": "approve"}]}
+    assert "Nothing was sent" in buf.getvalue()
     assert len(shown) == 1
 
 
@@ -207,4 +210,4 @@ async def test_invalid_json_typo_resumes_the_agent_with_the_corrected_decision(t
     out = buf.getvalue()
     assert had_error is False, out
     assert "Decision was" in out and "'edit'" in out, out
-    assert "reject" not in out, out
+    assert "'type': 'reject'" not in out, out
