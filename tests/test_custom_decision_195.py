@@ -66,9 +66,7 @@ _HITL_AGENT = textwrap.dedent(
 # The interrupt frame core emits for that agent.
 _FRAME = {
     "action_requests": [{"name": "send_email", "args": {"to": "a@example.org"}}],
-    "review_configs": [
-        {"action_name": "send_email", "allowed_decisions": ["approve", "reject"]}
-    ],
+    "review_configs": [{"action_name": "send_email", "allowed_decisions": ["approve", "reject"]}],
     "allowed_decisions": ["approve", "reject"],
 }
 
@@ -101,8 +99,14 @@ def tty(monkeypatch):
 @pytest.mark.parametrize(
     "value, problem",
     [
-        ({"type": "aprove"}, "Decision type 'aprove' is not allowed here; allowed: approve, reject."),
-        ({"type": "edit", "edited_action": {"name": "send_email", "args": {}}}, "'edit' is not allowed"),
+        (
+            {"type": "aprove"},
+            "Decision type 'aprove' is not allowed here; allowed: approve, reject.",
+        ),
+        (
+            {"type": "edit", "edited_action": {"name": "send_email", "args": {}}},
+            "'edit' is not allowed",
+        ),
         (None, 'A decision is a JSON object with a "type"'),
         ({"decisions": [{"kind": "approve"}]}, 'A decision is a JSON object with a "type"'),
         ([{"type": "approve"}] * 3, "Got 3 decisions for 2 pending action(s)"),
@@ -135,16 +139,22 @@ def test_legacy_alias_verbs_pass():
 
 
 def test_langchain_shapes_are_checked_only_for_its_interrupts():
-    frame = {**_FRAME, "review_configs": [
-        {"action_name": "send_email", "allowed_decisions": ["edit", "respond"]}
-    ]}
+    frame = {
+        **_FRAME,
+        "review_configs": [{"action_name": "send_email", "allowed_decisions": ["edit", "respond"]}],
+    }
     assert "edited_action" in cli._check_custom_decision({"type": "edit"}, 1, frame)[1]
     assert '"message" string' in cli._check_custom_decision({"type": "respond"}, 1, frame)[1]
     edit = {"type": "edit", "edited_action": {"name": "send_email", "args": {"to": "b"}}}
     assert cli._check_custom_decision(edit, 1, frame) == ([edit], None)
     # A plain interrupt() payload (no review_configs) reads its own edit shape.
     legacy = {"type": "edit", "args": {"path": "/tmp/hosts"}}
-    assert cli._check_custom_decision(legacy, 1, {"action_requests": [{"action": "x"}], "review_configs": []})[1] is None
+    assert (
+        cli._check_custom_decision(
+            legacy, 1, {"action_requests": [{"action": "x"}], "review_configs": []}
+        )[1]
+        is None
+    )
 
 
 def test_allowed_verbs_are_per_tool():
@@ -226,9 +236,7 @@ async def test_a_thread_holding_a_refused_answer_takes_the_next_one(monkeypatch)
     assert "done: sent to a@example.org" in out, out
 
 
-def test_continue_recovers_a_persisted_session_wedged_by_a_refused_answer(
-    tmp_path, monkeypatch
-):
+def test_continue_recovers_a_persisted_session_wedged_by_a_refused_answer(tmp_path, monkeypatch):
     pytest.importorskip("ag_ui_langgraph")
     pytest.importorskip("langgraph.checkpoint.sqlite.aio")
     ws = tmp_path / "ws"

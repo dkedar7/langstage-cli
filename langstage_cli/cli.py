@@ -1938,12 +1938,16 @@ def _decision_shapes(allowed: List[str], interrupt: Optional[Dict[str, Any]] = N
     The fields are LangChain HumanInTheLoopMiddleware's, so other interrupts get the
     bare ``{"type": ...}`` of each verb.
     """
-    shapes = {} if not _is_middleware_interrupt(interrupt) else {
-        "approve": '{"type": "approve"}',
-        "reject": '{"type": "reject", "message": "why"}',
-        "respond": '{"type": "respond", "message": "reply"}',
-        "edit": '{"type": "edit", "edited_action": {"name": "tool", "args": {...}}}',
-    }
+    shapes = (
+        {}
+        if not _is_middleware_interrupt(interrupt)
+        else {
+            "approve": '{"type": "approve"}',
+            "reject": '{"type": "reject", "message": "why"}',
+            "respond": '{"type": "respond", "message": "reply"}',
+            "edit": '{"type": "edit", "edited_action": {"name": "tool", "args": {...}}}',
+        }
+    )
     order = [v for v in _FALLBACK_VERBS if v in allowed] + [
         v for v in allowed if v not in _FALLBACK_VERBS
     ]
