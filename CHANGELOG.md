@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.50 - 2026-11-06
+
+### Fixed
+- **The approval menu offers only decisions the interrupt allows** (gh #197). "Approve
+  all actions" and "Reject all actions" were always shown, so on LangChain's
+  `HumanInTheLoopMiddleware(allowed_decisions=["approve", "edit"])` "Reject all" sent a
+  decision the middleware refuses and the turn errored. Each is now shown only when
+  every pending action allows it; "Provide custom decision (JSON)" and "Exit" are
+  always there.
+- **`--no-interactive` no longer sends an approve the action doesn't allow.** It stops
+  with exit `2` and says which decisions are allowed, with nothing sent, so the session
+  can be answered interactively.
+
 ## 0.6.49 - 2026-11-05
 
 ### Fixed

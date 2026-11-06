@@ -1833,23 +1833,24 @@ def handle_interrupt_input(
         except json.JSONDecodeError:
             return raw
 
-    options = [
-        "Approve all actions",
-        "Reject all actions",
-        "Provide custom decision (JSON)",
-        "Exit",
-    ]
+    # "Approve all" / "Reject all" are offered only when every pending action allows
+    # that verb. They used to be offered always, so on HumanInTheLoopMiddleware(
+    # allowed_decisions=["approve", "edit"]) "Reject all" sent a decision the
+    # middleware refuses and the turn errored (gh #197).
+    entries = []
+    if _all_actions_allow("approve", num_actions, interrupt):
+        entries.append(("Approve all actions", "approve"))
+    if _all_actions_allow("reject", num_actions, interrupt):
+        entries.append(("Reject all actions", "reject"))
+    entries += [("Provide custom decision (JSON)", "custom"), ("Exit", "exit")]
+    options = [label for label, _ in entries]
 
     while True:
-        choice = select_option(options, "How would you like to proceed?")
+        action = entries[select_option(options, "How would you like to proceed?")][1]
 
-        if choice == 0:
-            # Approve decision for each pending action
-            return {"decisions": [{"type": "approve"} for _ in range(num_actions)]}
-        elif choice == 1:
-            # Reject decision for each pending action
-            return {"decisions": [{"type": "reject"} for _ in range(num_actions)]}
-        elif choice == 2:
+        if action in ("approve", "reject"):
+            return {"decisions": [{"type": action} for _ in range(num_actions)]}
+        elif action == "custom":
             decisions = _prompt_custom_decision(num_actions, interrupt)
             if decisions is _BACK_TO_MENU:
                 continue  # nothing sent; show the menu again
@@ -1930,6 +1931,16 @@ def _allowed_verbs(interrupt: Optional[Dict[str, Any]], index: int) -> List[str]
     if isinstance(verbs, list) and verbs:
         return [str(v) for v in verbs]
     return list(_FALLBACK_VERBS)
+
+
+def _all_actions_allow(verb: str, num_actions: int, interrupt: Optional[Dict[str, Any]]) -> bool:
+    """Whether every pending action allows ``verb`` (gh #197)."""
+    from langstage_core import normalize_decision
+
+    return all(
+        normalize_decision(verb, _allowed_verbs(interrupt, i)) == verb
+        for i in range(max(num_actions, 1))
+    )
 
 
 def _decision_shapes(allowed: List[str], interrupt: Optional[Dict[str, Any]] = None) -> str:
@@ -2658,6 +2669,19 @@ async def _stream_turn(
                 f"(--no-interactive){RESET}"
             )
             resume = ""
+        elif has_interrupt and not _all_actions_allow(
+            "approve", num_pending_actions, interrupt_data
+        ):
+            # --no-interactive can only approve. An action that doesn't allow approve
+            # would refuse the decision and error the turn, so stop paused instead and
+            # say why (gh #197).
+            print(
+                "Error: approval required, but the pending action does not allow "
+                f"approve (allowed: {', '.join(_allowed_verbs(interrupt_data, 0))}).\n"
+                "Answer it in an interactive session.",
+                file=sys.stderr,
+            )
+            sys.exit(EXIT_PAUSED)
         elif has_interrupt:
             # --no-interactive: auto-approve and resume so the agent runs to
             # completion (same behavior as the default path, gh #32).
