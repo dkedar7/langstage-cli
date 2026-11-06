@@ -1997,36 +1997,30 @@ def _check_custom_decision(
     else:
         items = [value] * num_actions
 
-    # The edited_action / message fields are LangChain HumanInTheLoopMiddleware's
-    # shape (its interrupts carry review_configs); other interrupts read their own.
-    middleware = _is_middleware_interrupt(interrupt)
     for i, decision in enumerate(items):
-        allowed = _allowed_verbs(interrupt, i)
         if not isinstance(decision, dict) or not isinstance(decision.get("type"), str):
             return [], (
                 'A decision is a JSON object with a "type", e.g. {"type": "approve"}; '
-                f"allowed: {', '.join(allowed)}."
+                f"allowed: {', '.join(_allowed_verbs(interrupt, i))}."
             )
-        verb = normalize_decision(decision["type"], allowed)
-        if verb is None:
+
+    # LangChain HumanInTheLoopMiddleware interrupts (they carry review_configs) are
+    # checked by core, with the same rules its resume path enforces (core gh #227).
+    # Other interrupts read their own payload, so only the verb is checked here.
+    if _is_middleware_interrupt(interrupt):
+        from langstage_core import decision_problems
+
+        problems = decision_problems({"decisions": list(items)}, interrupt)
+        if problems:
+            return [], "; ".join(problems) + "."
+        return list(items), None
+    for i, decision in enumerate(items):
+        allowed = _allowed_verbs(interrupt, i)
+        if normalize_decision(decision["type"], allowed) is None:
             return [], (
                 f"Decision type '{decision['type']}' is not allowed here; "
                 f"allowed: {', '.join(allowed)}."
             )
-        if not middleware:
-            continue
-        if verb == "edit":
-            edited = decision.get("edited_action")
-            if not (
-                isinstance(edited, dict)
-                and isinstance(edited.get("name"), str)
-                and isinstance(edited.get("args"), dict)
-            ):
-                return [], 'An edit needs "edited_action": {"name": "<tool>", "args": {...}}.'
-        elif verb == "respond" and not isinstance(decision.get("message"), str):
-            return [], 'A respond decision needs a "message" string.'
-        elif verb == "reject" and not isinstance(decision.get("message", ""), str):
-            return [], 'The "message" of a reject decision must be a string.'
     return list(items), None
 
 
@@ -2569,36 +2563,6 @@ async def _pending_interrupt(agent: Any, thread_id: str) -> bool:
     return any(getattr(task, "interrupts", None) for task in getattr(state, "tasks", ()) or ())
 
 
-async def _discard_failed_resume(agent: Any, thread_id: str) -> None:
-    """Drop the answer a failed resume left on the thread, so the next one is used.
-
-    When resuming an interrupt raises (a decision the agent refused), LangGraph keeps
-    that resume value on the checkpoint and replays it on every later resume, so the
-    approval could never be answered again, even with ``-c`` (gh #195). The failed
-    task still shows its interrupt and carries the error. A checkpoint with no new
-    values drops the stale answer: the interrupted step runs again and takes the new
-    one. If that isn't possible the stale answer stays, and the error says so again.
-    """
-    graph = getattr(agent, "graph", None)
-    if not thread_id or graph is None or not hasattr(graph, "aupdate_state"):
-        return
-    config = {"configurable": {"thread_id": thread_id}}
-    try:
-        state = await graph.aget_state(config)
-    except Exception:  # noqa: BLE001 - no checkpointer / no state: nothing to clear
-        return
-    tasks = getattr(state, "tasks", ()) or ()
-    if not any(getattr(t, "interrupts", None) and getattr(t, "error", None) for t in tasks):
-        return
-    try:
-        await graph.aupdate_state(config, None)
-    except Exception as e:  # noqa: BLE001 - leave the thread as it is
-        _status(
-            f"{YELLOW}⏺ Couldn't clear the refused answer on this session ({e}); "
-            f"start a new session if the approval keeps failing.{RESET}"
-        )
-
-
 async def _stream_turn(
     agent: Any, message: str, thread_id: str, interactive: bool, verbose: bool
 ) -> tuple[bool, bool, bool]:
@@ -2626,8 +2590,6 @@ async def _stream_turn(
         spinner = None if _QUIET else Spinner("Thinking")
         if spinner:
             spinner.start()
-        if resume is not None:
-            await _discard_failed_resume(agent, thread_id)
         try:
             with _debug_tracebacks(verbose):
                 async for chunk in agui_stream_updates(agent, message, thread_id, resume=resume):
