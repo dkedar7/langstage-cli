@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.51 - 2026-11-06
+
+### Changed
+- **Approvals are checked and recovered by langstage-core** (core gh #227). Requires
+  `langstage-core>=1.0.58`. A custom decision for LangChain's HumanInTheLoopMiddleware
+  is now checked with core's `decision_problems`, the same rules core's resume path
+  enforces, so the menu re-prompts with core's message (for example
+  `decision 1 (send_email): type 'aprove' is not allowed; allowed: approve, reject`).
+  Other interrupts still get the verb check, and the 0.6.50 menu filtering is unchanged.
+- **The cli's own recovery of a stuck session is gone; core does it.** A session stuck
+  on a refused answer (left by 0.6.48 or older) still recovers on the next `-c`. The cli
+  used to clear the stuck step before core read the pending approval, which made
+  ag-ui-langgraph fall back to its old resume wire and print
+  `forwardedProps.command.resume is deprecated; ...` into the conversation. That log
+  no longer appears.
+
 ## 0.6.50 - 2026-11-06
 
 ### Fixed

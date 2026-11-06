@@ -13,6 +13,7 @@ and a thread already holding a refused answer drops it before the next resume.
 """
 
 import io
+import logging
 import textwrap
 from contextlib import redirect_stdout
 
@@ -101,7 +102,7 @@ def tty(monkeypatch):
     [
         (
             {"type": "aprove"},
-            "Decision type 'aprove' is not allowed here; allowed: approve, reject.",
+            "decision 1 (send_email): type 'aprove' is not allowed; allowed: approve, reject",
         ),
         (
             {"type": "edit", "edited_action": {"name": "send_email", "args": {}}},
@@ -110,7 +111,7 @@ def tty(monkeypatch):
         (None, 'A decision is a JSON object with a "type"'),
         ({"decisions": [{"kind": "approve"}]}, 'A decision is a JSON object with a "type"'),
         ([{"type": "approve"}] * 3, "Got 3 decisions for 2 pending action(s)"),
-        ({"type": "reject", "message": 5}, "must be a string"),
+        ({"type": "reject", "message": 5}, 'a reject "message" must be text'),
     ],
 )
 def test_bad_decisions_are_refused(value, problem):
@@ -120,17 +121,20 @@ def test_bad_decisions_are_refused(value, problem):
     assert problem in got
 
 
+_FRAME2 = {**_FRAME, "action_requests": _FRAME["action_requests"] * 2}
+
+
 def test_one_decision_applies_to_every_action():
-    decisions, problem = cli._check_custom_decision({"type": "reject", "message": "no"}, 2, _FRAME)
+    decisions, problem = cli._check_custom_decision({"type": "reject", "message": "no"}, 2, _FRAME2)
     assert problem is None
     assert decisions == [{"type": "reject", "message": "no"}] * 2
 
 
 def test_a_pasted_envelope_is_unwrapped():
     one = {"decisions": [{"type": "approve"}]}
-    assert cli._check_custom_decision(one, 2, _FRAME) == ([{"type": "approve"}] * 2, None)
+    assert cli._check_custom_decision(one, 2, _FRAME2) == ([{"type": "approve"}] * 2, None)
     each = {"decisions": [{"type": "approve"}, {"type": "reject"}]}
-    assert cli._check_custom_decision(each, 2, _FRAME) == (each["decisions"], None)
+    assert cli._check_custom_decision(each, 2, _FRAME2) == (each["decisions"], None)
 
 
 def test_legacy_alias_verbs_pass():
@@ -144,7 +148,10 @@ def test_langchain_shapes_are_checked_only_for_its_interrupts():
         "review_configs": [{"action_name": "send_email", "allowed_decisions": ["edit", "respond"]}],
     }
     assert "edited_action" in cli._check_custom_decision({"type": "edit"}, 1, frame)[1]
-    assert '"message" string' in cli._check_custom_decision({"type": "respond"}, 1, frame)[1]
+    assert (
+        'respond needs a text "message"'
+        in cli._check_custom_decision({"type": "respond"}, 1, frame)[1]
+    )
     edit = {"type": "edit", "edited_action": {"name": "send_email", "args": {"to": "b"}}}
     assert cli._check_custom_decision(edit, 1, frame) == ([edit], None)
     # A plain interrupt() payload (no review_configs) reads its own edit shape.
@@ -178,7 +185,7 @@ def test_menu_reprompts_on_a_refused_decision_and_shows_the_shapes(tty, monkeypa
         resume = cli.handle_interrupt_input(1, interrupt=_FRAME)
     out = buf.getvalue()
     assert resume == {"decisions": [{"type": "approve"}]}
-    assert "'aprove' is not allowed here" in out and "Nothing was sent" in out
+    assert "type 'aprove' is not allowed" in out and "Nothing was sent" in out
     assert '{"type": "approve"} | {"type": "reject", "message": "why"}' in out
     assert '"edit"' not in out  # not offered for this tool
     assert len(shown) == 1  # re-prompted in place
@@ -206,7 +213,7 @@ async def test_a_typo_is_refused_then_the_corrected_decision_runs_the_tool(tty, 
     assert "done: sent to a@example.org" in out, out
 
 
-async def test_a_thread_holding_a_refused_answer_takes_the_next_one(monkeypatch):
+async def test_a_thread_holding_a_refused_answer_takes_the_next_one(monkeypatch, caplog, capsys):
     # A thread wedged by an older CLI: the refused answer is already on the checkpoint.
     pytest.importorskip("ag_ui_langgraph")
     from langgraph.checkpoint.memory import MemorySaver
@@ -226,7 +233,7 @@ async def test_a_thread_holding_a_refused_answer_takes_the_next_one(monkeypatch)
 
     agent = build_session_agent(graph)
     buf = io.StringIO()
-    with redirect_stdout(buf):
+    with caplog.at_level(logging.WARNING), redirect_stdout(buf):
         _elapsed, had_error = await cli.run_single_turn_agui(
             agent, "and now?", "t-wedged", interactive=False
         )
@@ -234,9 +241,14 @@ async def test_a_thread_holding_a_refused_answer_takes_the_next_one(monkeypatch)
     assert had_error is False, out
     assert "aprove" not in out, out
     assert "done: sent to a@example.org" in out, out
+    # Recovered by core (gh #227), so ag-ui never falls back to the deprecated wire.
+    logs = caplog.text + capsys.readouterr().err
+    assert "forwardedProps.command.resume is deprecated" not in out + logs, out + logs
 
 
-def test_continue_recovers_a_persisted_session_wedged_by_a_refused_answer(tmp_path, monkeypatch):
+def test_continue_recovers_a_persisted_session_wedged_by_a_refused_answer(
+    tmp_path, monkeypatch, caplog
+):
     pytest.importorskip("ag_ui_langgraph")
     pytest.importorskip("langgraph.checkpoint.sqlite.aio")
     ws = tmp_path / "ws"
@@ -258,18 +270,20 @@ def test_continue_recovers_a_persisted_session_wedged_by_a_refused_answer(tmp_pa
 
     monkeypatch.setattr(cli, "_is_a_tty", lambda *a, **k: True)
     monkeypatch.setattr(cli, "handle_interrupt_input", old_menu)
-    monkeypatch.setattr(cli, "_discard_failed_resume", _no_discard)
+    # ...and with a core older than 1.0.58, which didn't check it either.
+    monkeypatch.setattr("langstage_core.resume.decision_problems", lambda *_a, **_k: [])
     r = runner.invoke(main, ["email them"])
     assert "aprove" in r.output, r.output
     monkeypatch.undo()
     monkeypatch.setenv("LANGSTAGE_CONFIG_HOME", str(tmp_path / "empty_home"))
     monkeypatch.chdir(ws)
 
-    r = runner.invoke(main, ["-c", "--no-interactive", "x"])
+    # Core 1.0.58's resume path drops the stale answer (core gh #227), without the
+    # ag-ui "forwardedProps.command.resume is deprecated" log the cli's own recovery
+    # caused by clearing the interrupt before core read it.
+    with caplog.at_level(logging.WARNING):
+        r = runner.invoke(main, ["-c", "--no-interactive", "x"])
     assert r.exit_code == 0, r.output
     assert "aprove" not in r.output, r.output
     assert "done: sent to a@example.org" in r.output, r.output
-
-
-async def _no_discard(*_a, **_k):
-    return None
+    assert "deprecated" not in r.output + caplog.text, r.output + caplog.text
