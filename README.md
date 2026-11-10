@@ -316,8 +316,8 @@ the reply it renders is the graph's `messages` channel. A graph whose state has 
 `state["query"]` fails with `KeyError`, and one that tolerates the missing key runs and
 the CLI prints its final state as JSON, with a note on stderr. To drive such a graph from
 the CLI, give it a `messages` channel, or a first node that copies the last message into
-`query`. A turn with no message and no state to show is an error (exit 1), the same
-verdict `--verify` gives.
+`query`. `--verify` gives the same verdict as a run: it passes a turn that ends with
+final state to show, and fails a turn with no message and no state (exit 1).
 
 A spec's inline `:name` (`app.py:prod`) wins over `-g` / `[agent] graph_name`;
 `--show-config` reports the graph that runs, and a run notes the ignored name.
