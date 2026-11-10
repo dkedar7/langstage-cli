@@ -2701,6 +2701,28 @@ async def _render_empty_turn(agent: Any, thread_id: str) -> bool:
     return False
 
 
+def _empty_turn_state_keys(graph: Any, thread_id: str, result: Any) -> List[str]:
+    """The non-``messages`` state keys behind a ``--verify`` "no content" failure.
+
+    Core's verdict fails a turn that completed cleanly with no content, which is right
+    for surfaces that only show messages. The CLI also shows a graph's final state
+    when there's no message (``_render_empty_turn``, gh #120), so a single-shot run
+    passed a ``{"query", "answer"}`` graph that ``--verify`` failed (gh #200). Return
+    the keys that run would show, or ``[]`` when the failure is anything else (an
+    error, no completion) or there is no state, so both paths give one verdict.
+    """
+    if result.saw_error or not result.saw_complete or result.content_chars:
+        return []
+    try:
+        state = graph.get_state({"configurable": {"thread_id": thread_id}})
+    except Exception:  # noqa: BLE001 - no readable state: keep core's verdict
+        return []
+    raw = getattr(state, "values", None)
+    if not isinstance(raw, dict):
+        return []
+    return [k for k in raw if k != "messages"]
+
+
 class _DaemonThreadPool(concurrent.futures.ThreadPoolExecutor):
     """The turn loop's default executor: daemon worker threads nothing waits for (gh #192).
 
@@ -3851,9 +3873,37 @@ def main(
         if verify_agent:
             from langstage_core.agui import verify as _core_verify
 
-            result = _core_verify(graph)
+            # A checkpointer and a known thread let us read the graph's final state
+            # when core reports an empty turn (gh #200, below). The in-memory one is
+            # only for this probe: restore the graph after, since the module (and so
+            # the graph object) stays cached in this process.
+            own_checkpointer = getattr(graph, "checkpointer", None)
+            _ensure_checkpointer(graph)
+            verify_thread = f"verify-{uuid.uuid4().hex}"
+            try:
+                result = _core_verify(graph, thread_id=verify_thread)
+                state_keys = (
+                    [] if result.ok else _empty_turn_state_keys(graph, verify_thread, result)
+                )
+            finally:
+                if own_checkpointer is None:
+                    try:
+                        graph.checkpointer = None
+                    except Exception:  # noqa: BLE001 - best effort
+                        pass
             if result.ok:
                 print(f"{GREEN}✓{RESET} agent verified: {result.reason}")
+                sys.exit(0)
+            if state_keys:
+                print(
+                    'note: the agent produced no message (langstage-cli renders the "messages" '
+                    "channel); its final state is what a run shows instead.",
+                    file=sys.stderr,
+                )
+                print(
+                    f"{GREEN}✓{RESET} agent verified: turn completed with final state "
+                    f"({', '.join(state_keys)})"
+                )
                 sys.exit(0)
             _status(f"{RED}✗ agent verification failed: {result.reason}{RESET}")
             sys.exit(1)

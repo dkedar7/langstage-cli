@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.52 - 2026-11-10
+
+### Fixed
+- **`--verify` gives the same verdict as a single-shot run for a graph with no
+  `messages` channel** (gh #200). Since 0.6.x (gh #120) a run of a `{"query", "answer"}`
+  graph prints its final state and exits 0, but `--verify` still failed it with
+  `turn completed but produced no content (0 chars)`. When core reports a clean but
+  empty turn, `--verify` now reads the graph's final state from the probe's thread and
+  passes if it has non-`messages` values, with the same note on stderr. A turn with no
+  message and no state still fails (exit 1), as a run does. The in-memory checkpointer
+  the probe needs is removed afterwards, so the loaded graph is left as it was.
+
 ## 0.6.51 - 2026-11-06
 
 ### Changed

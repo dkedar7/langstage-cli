@@ -278,3 +278,32 @@ def test_no_agent_error_without_toml_is_unchanged(tmp_path, monkeypatch):
     assert r.exit_code == 1, r.output
     assert "No agent specified" in r.output
     assert "unknown" not in r.output
+
+
+# --- gh #200: --verify agrees with a single-shot run on a no-`messages` graph ---
+
+
+def test_verify_passes_a_graph_whose_run_shows_final_state(tmp_path, monkeypatch):
+    _ws(tmp_path, monkeypatch, {"custom_state_200.py": _CUSTOM_STATE})
+    run = CliRunner().invoke(main, ["-a", "custom_state_200.py:graph", "hello"])
+    ver = CliRunner().invoke(main, ["--verify", "-a", "custom_state_200.py:graph"])
+    assert run.exit_code == 0, run.output
+    assert ver.exit_code == 0, ver.output  # one verdict for the run and the CI gate
+    assert "verified" in ver.stdout and "answer" in ver.stdout, ver.stdout
+    assert "no message" in ver.stderr, ver.stderr
+
+
+def test_verify_still_fails_a_turn_with_no_message_and_no_state(tmp_path, monkeypatch):
+    _ws(tmp_path, monkeypatch, {"silent_200.py": _SILENT})
+    run = CliRunner().invoke(main, ["-a", "silent_200.py:graph", "hello"])
+    ver = CliRunner().invoke(main, ["--verify", "-a", "silent_200.py:graph"])
+    assert run.exit_code == 1, run.output
+    assert ver.exit_code == 1, ver.output
+    assert "no content" in ver.stderr, ver.stderr
+    assert ver.stdout.strip() == "", ver.stdout
+
+
+def test_verify_passes_a_final_state_graph_with_no_persist(tmp_path, monkeypatch):
+    _ws(tmp_path, monkeypatch, {"custom_state_200b.py": _CUSTOM_STATE})
+    ver = CliRunner().invoke(main, ["--no-persist", "--verify", "-a", "custom_state_200b.py:graph"])
+    assert ver.exit_code == 0, ver.output
