@@ -2701,6 +2701,29 @@ async def _render_empty_turn(agent: Any, thread_id: str) -> bool:
     return False
 
 
+def _verify_target(graph: Any, toml_configurable: Any) -> Any:
+    """What ``--verify`` hands core's ``verify``: the graph a run would drive.
+
+    A run forwards the ``[configurable]`` table (minus ``thread_id``, which is per
+    run) to the graph through ``build_session_agent`` (gh #57). ``--verify`` used to
+    pass the bare graph, so an agent reading ``config["configurable"][...]`` ran fine
+    and failed the CI gate with a ``KeyError`` (gh #202). With keys to forward, build
+    the agent the same way a run does. The probe still uses its own fresh thread, so a
+    pinned ``thread_id`` is dropped. If the build fails (a wrong-type export), return
+    the bare graph so core turns it into its usual clean ``ok=False`` verdict.
+    """
+    configurable = dict(toml_configurable) if isinstance(toml_configurable, dict) else {}
+    configurable.pop("thread_id", None)
+    if not configurable:
+        return graph
+    from langstage_cli.agui_stream import build_session_agent
+
+    try:
+        return build_session_agent(graph, config={"configurable": configurable})
+    except Exception:  # noqa: BLE001 - let core report the bad agent
+        return graph
+
+
 def _empty_turn_state_keys(graph: Any, thread_id: str, result: Any) -> List[str]:
     """The non-``messages`` state keys behind a ``--verify`` "no content" failure.
 
@@ -3881,7 +3904,10 @@ def main(
             _ensure_checkpointer(graph)
             verify_thread = f"verify-{uuid.uuid4().hex}"
             try:
-                result = _core_verify(graph, thread_id=verify_thread)
+                result = _core_verify(
+                    _verify_target(graph, config_module.get(toml_config, "configurable")),
+                    thread_id=verify_thread,
+                )
                 state_keys = (
                     [] if result.ok else _empty_turn_state_keys(graph, verify_thread, result)
                 )

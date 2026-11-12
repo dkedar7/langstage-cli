@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.53 - 2026-11-12
+
+### Fixed
+- **`--verify` forwards the `[configurable]` table from `langstage.toml`, as a run
+  does** (gh #202). A run passes those keys to the graph (gh #57), but the `--verify`
+  probe ran the bare graph. An agent reading `config["configurable"][...]` ran fine and
+  failed the CI gate with `KeyError` (exit 1). The probe now builds the agent with the
+  same config a run uses, minus `thread_id`: it keeps its own fresh thread, so a pinned
+  `thread_id` is ignored. `[configurable]` is the only TOML table that reaches the
+  graph, so run and `--verify` now see the same config.
+
 ## 0.6.52 - 2026-11-10
 
 ### Fixed
