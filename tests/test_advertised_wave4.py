@@ -307,3 +307,60 @@ def test_verify_passes_a_final_state_graph_with_no_persist(tmp_path, monkeypatch
     _ws(tmp_path, monkeypatch, {"custom_state_200b.py": _CUSTOM_STATE})
     ver = CliRunner().invoke(main, ["--no-persist", "--verify", "-a", "custom_state_200b.py:graph"])
     assert ver.exit_code == 0, ver.output
+
+
+# --- gh #202: --verify forwards the [configurable] table a run forwards ---
+
+_CFG_AGENT = textwrap.dedent(
+    """
+    from langgraph.graph import StateGraph, START, END
+    from langgraph.graph.message import MessagesState
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableConfig
+
+    def r(s, config: RunnableConfig):
+        user = config["configurable"]["user_id"]
+        return {"messages": [AIMessage(content=f"hello {user}")]}
+
+    g = StateGraph(MessagesState); g.add_node("r", r); g.add_edge(START, "r"); g.add_edge("r", END)
+    graph = g.compile()
+    """
+)
+
+
+def _cfg_toml(spec: str, extra: str = "") -> str:
+    return f'[agent]\nspec = "{spec}"\n\n[configurable]\nuser_id = "alex"\n{extra}'
+
+
+def test_verify_forwards_configurable_like_a_run(tmp_path, monkeypatch):
+    _ws(
+        tmp_path,
+        monkeypatch,
+        {"cfg_202.py": _CFG_AGENT, "langstage.toml": _cfg_toml("cfg_202.py:graph")},
+    )
+    run = CliRunner().invoke(main, ["--no-persist", "hi"])
+    ver = CliRunner().invoke(main, ["--verify"])
+    assert run.exit_code == 0 and "hello alex" in run.stdout, run.output
+    assert ver.exit_code == 0, ver.output  # was KeyError: 'user_id', exit 1
+    assert "verified" in ver.stdout, ver.stdout
+
+
+def test_verify_with_configurable_ignores_a_pinned_thread_id(tmp_path, monkeypatch):
+    toml = _cfg_toml("cfg_202b.py:graph", 'thread_id = "pinned"\n')
+    _ws(tmp_path, monkeypatch, {"cfg_202b.py": _CFG_AGENT, "langstage.toml": toml})
+    ver = CliRunner().invoke(main, ["--verify"])
+    assert ver.exit_code == 0, ver.output
+
+
+def test_verify_without_configurable_still_fails_an_agent_that_needs_it(tmp_path, monkeypatch):
+    _ws(tmp_path, monkeypatch, {"cfg_202c.py": _CFG_AGENT})
+    ver = CliRunner().invoke(main, ["--verify", "-a", "cfg_202c.py:graph"])
+    assert ver.exit_code == 1, ver.output
+    assert "user_id" in ver.stderr, ver.stderr
+
+
+def test_verify_target_falls_back_to_the_graph_when_the_build_fails():
+    bad = {"not": "a graph"}
+    assert cli._verify_target(bad, {"user_id": "alex"}) is bad
+    assert cli._verify_target(bad, None) is bad
+    assert cli._verify_target(bad, {"thread_id": "only"}) is bad
