@@ -271,8 +271,10 @@ langstage-cli --verify -a my_agent.py:graph || { echo "agent broken" >&2; exit 1
 A single-shot run (a `MESSAGE` argument or `-f/--file`) prints only the agent's
 reply — no header, spinner, tool chatter, reasoning, timing, or color — as soon as its
 output is **piped** (stdout isn't a TTY). Errors and diagnostics go to stderr, and so does
-anything your agent module `print`s while it is being imported. The process exits
-non-zero if the turn failed, so a run is safe to capture:
+anything your agent module `print`s while it is being imported. When a turn ends on a
+tool result with no assistant text after it (a `return_direct` tool), that result is the
+reply. The process exits non-zero if the turn failed or left nothing to print, so a run
+is safe to capture:
 
 ```bash
 answer=$(langstage-cli --demo "say hi") || echo "run failed" >&2
