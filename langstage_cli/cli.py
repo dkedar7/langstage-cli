@@ -2529,7 +2529,7 @@ async def run_single_turn_agui(
             f"{YELLOW}⏺ This session is paused at an approval from its previous turn; {note}{RESET}"
         )
         try:
-            had_error, produced, saw_interrupt = await _stream_turn(
+            had_error, produced, saw_interrupt, tool_results = await _stream_turn(
                 agent, message, thread_id, interactive, verbose
             )
         except SystemExit:
@@ -2538,12 +2538,21 @@ async def run_single_turn_agui(
         if saw_interrupt:  # the pass only answered the old approval
             if produced:
                 print()  # the previous turn's reply ends; the new message's begins
-            more_error, produced, _ = await _stream_turn(
+            more_error, more_produced, _, tool_results = await _stream_turn(
                 agent, message, thread_id, interactive, verbose
             )
             had_error = had_error or more_error
+            # Quiet mode: the first pass's reply already reached stdout, so the run
+            # as a whole printed something even if the new message's turn did not.
+            produced = more_produced or (_QUIET and produced)
     else:
-        had_error, produced, _ = await _stream_turn(agent, message, thread_id, interactive, verbose)
+        had_error, produced, _, tool_results = await _stream_turn(
+            agent, message, thread_id, interactive, verbose
+        )
+    if _QUIET and not had_error and not produced:
+        # Nothing reached stdout. A turn that ends on a tool result (a
+        # `return_direct` tool) has its answer in that result: print it (gh #204).
+        produced = await _print_final_tool_results(agent, thread_id, tool_results)
     if not had_error and not produced:
         had_error = not await _render_empty_turn(agent, thread_id)
     return time.time() - start_time, had_error
@@ -2568,7 +2577,17 @@ async def _stream_turn(
 ) -> tuple[bool, bool, bool]:
     """One message through the adapter, answering interrupts until the run ends.
 
-    Returns ``(had_error, produced, saw_interrupt)``.
+    Returns ``(had_error, produced, saw_interrupt, tool_results)``.
+
+    ``produced`` is whether the turn showed the user anything. In a terminal that is
+    any text, reasoning, tool frame or interrupt (gh #120). In quiet mode only reply
+    text reaches stdout, so only reply text counts: tool frames, reasoning and the
+    approval banner are all dropped there, and counting them let a turn print nothing
+    and exit 0 (gh #204).
+
+    ``tool_results`` is the text of the tool results the turn ended on: those that
+    arrived after the last reply text and the last tool call. A `return_direct` tool
+    leaves its answer there, with no assistant text after it.
     """
     from langstage_cli.agui_stream import agui_stream_updates
 
@@ -2576,8 +2595,9 @@ async def _stream_turn(
     print_chunk._streaming_reasoning = False
     _md_stream.reset()
     had_error = False
-    produced = False  # any text / reasoning / tool frame / interrupt this turn (gh #120)
+    produced = False  # see the docstring: what counts depends on quiet mode
     saw_interrupt = False
+    tool_results: List[str] = []  # results since the last reply text / tool call
     resume = None  # first pass sends the message; later passes carry the decision
 
     while True:
@@ -2600,10 +2620,17 @@ async def _stream_turn(
                     print_chunk(chunk, verbose=verbose)
                     if chunk.get("status") == "error":
                         had_error = True
-                    if chunk.get("status") == "interrupt" or any(
+                    if _QUIET:
+                        if chunk.get("chunk"):
+                            produced = True
+                    elif chunk.get("status") == "interrupt" or any(
                         chunk.get(k) for k in _CONTENT_KEYS
                     ):
                         produced = True
+                    if chunk.get("chunk") or chunk.get("tool_calls"):
+                        tool_results = []  # the agent went on: those weren't the answer
+                    elif "tool_result" in chunk:
+                        tool_results.append(_tool_result_text(chunk.get("tool_result")))
                     if chunk.get("status") == "interrupt":
                         has_interrupt = saw_interrupt = True
                         interrupt_data = chunk.get("interrupt", {})
@@ -2656,11 +2683,70 @@ async def _stream_turn(
         else:
             break
 
-    return had_error, produced, saw_interrupt
+    return had_error, produced, saw_interrupt, tool_results
 
 
-# Chunk keys that carry turn output a user sees (text, reasoning, tool frames).
+# Chunk keys that carry turn output a user sees in a terminal (text, reasoning, tool
+# frames). Quiet mode prints only the text, so there only "chunk" counts (gh #204).
 _CONTENT_KEYS = ("chunk", "reasoning", "tool_calls", "tool_result", "extraction")
+
+
+def _tool_result_text(result: Any) -> str:
+    """A tool result as the text a script should capture."""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, (dict, list)):
+        try:
+            return json.dumps(result, default=str, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(result)
+    return str(result)
+
+
+async def _ends_on_assistant_message(agent: Any, thread_id: str) -> bool:
+    """Whether the thread's last message is the assistant's (so not a tool result).
+
+    Frames can't tell a `return_direct` turn from one where the model read the tool
+    result and then wrote an empty message: both stream a tool call, its result and
+    nothing else. The saved state can. ``False`` when there is no readable state.
+    """
+    graph = getattr(agent, "graph", None)
+    if not thread_id or graph is None or not hasattr(graph, "aget_state"):
+        return False
+    try:
+        state = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+    except Exception:  # noqa: BLE001 - no checkpointer / no state: go by the frames
+        return False
+    values = getattr(state, "values", None)
+    messages = values.get("messages") if isinstance(values, dict) else None
+    if not isinstance(messages, (list, tuple)) or not messages:
+        return False
+    last = messages[-1]
+    if isinstance(last, dict):
+        kind = last.get("type") or last.get("role")
+    else:
+        kind = getattr(last, "type", None)
+    return kind in ("ai", "assistant", "AIMessageChunk")
+
+
+async def _print_final_tool_results(agent: Any, thread_id: str, results: List[str]) -> bool:
+    """Quiet mode: print the tool results a turn ended on as its reply (gh #204).
+
+    A `return_direct` tool's result *is* the agent's answer, and no assistant text
+    follows it. Quiet mode dropped it as tool chatter, so ``answer=$(langstage-cli …)``
+    captured an empty string with exit 0. Each result the turn ended on is printed
+    as-is, one per line when several tools ran in the last step, the way two messages
+    in one turn are separated. Returns ``False``, printing nothing, when there is no
+    result text or the model had the last word and left it empty: that turn produced
+    nothing, and the caller reports it.
+    """
+    texts = [text for text in results if text]
+    if not texts or await _ends_on_assistant_message(agent, thread_id):
+        return False
+    safe_write("\n".join(texts), flush=True)
+    return True
 
 
 async def _render_empty_turn(agent: Any, thread_id: str) -> bool:

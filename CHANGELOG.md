@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.54 - 2026-11-16
+
+### Fixed
+- **A scriptable run prints the tool result a turn ends on, instead of nothing with
+  exit 0** (gh #204). With a `@tool(return_direct=True)` agent the tool result is the
+  answer and no assistant text follows it. Quiet output (piped stdout, or `-q`) dropped
+  it as tool chatter while the empty-turn check counted it as output, so
+  `answer=$(langstage-cli ...)` captured an empty string, got exit 0 and saw nothing on
+  stderr. Quiet output now prints the result the turn ended on as the reply. If several
+  tools ran in that last step, each result gets its own line. Results the model went on
+  to read are still left out, and a turn that has assistant text prints only that text,
+  as before.
+- **A quiet run that would print nothing exits 1 and says so.** In quiet mode only reply
+  text reaches stdout, so only reply text now counts as output there. A turn that ends
+  on a tool call nobody ran, on an empty tool result, on an empty message the model
+  wrote after reading the result, or on reasoning alone used to exit 0 with empty
+  stdout. It now reports `the turn produced no output` on stderr and exits 1, or prints
+  the graph's final state as it already did for a graph with no message (gh #120). A
+  terminal renders and exits as before: there the tool card is visible output.
+
 ## 0.6.53 - 2026-11-12
 
 ### Fixed
