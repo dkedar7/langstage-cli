@@ -1819,19 +1819,17 @@ def handle_interrupt_input(
         # A generic interrupt() asks for an arbitrary value, not tool approval, so
         # "Approve/Reject" have no meaning and wrapping the answer in
         # {"decisions": [...]} corrupts it (gh #99). Collect a raw value and resume
-        # with it UNWRAPPED. JSON is attempted first so a structured value (number,
-        # list, dict) survives; a non-JSON entry is used verbatim as a string — the
-        # canonical `value = interrupt("What is your name?")` case, where the user
-        # types `Alice` and the agent must receive `"Alice"`, not an envelope.
+        # with it UNWRAPPED: the canonical `value = interrupt("What is your name?")`
+        # case, where the user types `Alice` and the agent must receive `"Alice"`,
+        # not an envelope. What was typed is the answer, as text (gh #206).
         options = ["Provide a response", "Exit"]
         choice = select_option(options, "How would you like to respond?")
         if choice != 0:
             sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
-        raw = _approval_input()
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return raw
+        print(
+            f"{DIM}Type your answer. It is sent as text; a JSON object or array is sent as data.{RESET}"
+        )
+        return _generic_answer(_approval_input())
 
     # "Approve all" / "Reject all" are offered only when every pending action allows
     # that verb. They used to be offered always, so on HumanInTheLoopMiddleware(
@@ -1857,6 +1855,30 @@ def handle_interrupt_input(
             return {"decisions": decisions}
         else:
             sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
+
+
+def _generic_answer(raw: str) -> Any:
+    """The value a typed answer to a generic ``interrupt()`` resumes the graph with.
+
+    The answer is the text that was typed, the way ``input()`` would return it. Every
+    answer used to be tried as JSON first, so a ZIP code ``94110`` reached the graph
+    as an int, ``true`` as a bool, ``1e3`` as a float, and ``null`` as ``None``, which
+    LangGraph reads as "no answer" and asks the question again (gh #206).
+
+    One exception keeps a structured answer possible (gh #99): text that is a
+    complete JSON object or array (``{"a": 1}``, ``["Alice", "B"]``) is sent as that
+    dict or list. Nothing else is decoded, so ``[sic] yes`` and ``"quoted"`` stay
+    exactly as typed, quotes and surrounding spaces included.
+    """
+    text = raw.strip()
+    if text[:1] in ("{", "["):
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            return raw
+        if isinstance(value, (dict, list)):
+            return value
+    return raw
 
 
 # Returned by _prompt_custom_decision when the user goes back to the menu. A sentinel,

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.55 - 2026-11-17
+
+### Fixed
+- **A typed answer to a plain `interrupt("…")` reaches the graph as the text you typed**
+  (gh #206). The answer was tried as JSON first, so what the agent received depended on
+  what you happened to type: `94110` arrived as an int and crashed an agent that called
+  `.strip()` on the ZIP code it asked for, `true` arrived as a bool, `1e3` as a float,
+  and `02139` as a string. `null` arrived as `None`, which LangGraph reads as "no
+  answer", so the same question was asked again and the word could not be given. The
+  answer is now sent as text, the way `input()` returns it, with quotes and surrounding
+  spaces kept.
+- **A structured answer is still possible** (gh #99): an answer that is a complete JSON
+  object or array, such as `{"a": 1}` or `["Alice", "B"]`, is sent as that dict or list.
+  Nothing else is decoded, so `[sic] yes` and `"quoted"` stay as typed. An agent that
+  wants a number converts it, as it would with `input()`.
+- The response prompt now says how the answer is sent, so it no longer looks like the
+  main prompt.
+
 ## 0.6.54 - 2026-11-16
 
 ### Fixed
