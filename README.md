@@ -142,6 +142,10 @@ without you baking a checkpointer into your own graph:
   pending action, such as `{"type": "approve"}` or `{"type": "reject", "message": "why"}`
   (a pasted `{"decisions": [...]}` list also works). The prompt shows the shapes the
   pending tool allows, and a decision it would refuse is caught before anything is sent.
+- **Provide a response**, the menu for a plain `interrupt("What is your ZIP code?")`,
+  sends your answer as the text you typed: `94110`, `true` and `null` reach the agent as
+  strings, like `input()`. To send structured data, type a complete JSON object or array
+  (`{"a": 1}`, `["Alice", "B"]`); it arrives as a dict or list.
 
 State lives in `~/.langstage/sessions/<workspace-hash>.sqlite` (honoring
 `LANGSTAGE_CONFIG_HOME`; override the whole location with `LANGSTAGE_CLI_SESSIONS_DIR`).

@@ -15,6 +15,7 @@ bespoke event-parser path. ADR 0003 finished the migration: since langstage-core
 0.6.1). The ``--agui`` flag it was named for is deprecated and inert (gh #88).
 """
 
+import json
 from typing import Any, AsyncIterator, Dict
 
 _IMPORT_HINT = 'the AG-UI streaming path needs: pip install "langstage-core[agui]"'
@@ -64,5 +65,17 @@ async def agui_stream_updates(
     """
     from langstage_core.agui import iter_chunk_frames
 
-    async for frame in iter_chunk_frames(agent, message, thread_id, resume=resume):
+    async for frame in iter_chunk_frames(agent, message, thread_id, resume=text_resume(resume)):
         yield frame
+
+
+def text_resume(resume: Any) -> Any:
+    """``resume`` in the form that reaches the graph unchanged over core's resume wire.
+
+    A ``str`` here is text the user typed. Core's wire (both ``RunAgentInput.resume[]``
+    and the legacy ``forwarded_props.command.resume``) JSON-decodes a string payload,
+    so ``"94110"`` arrived as the int ``94110``, ``"true"`` as ``True`` and ``"null"``
+    as ``None`` (gh #206). Encoding the text as a JSON string makes that decode return
+    the very same string. Anything else (a dict, a list, ``None``) passes through.
+    """
+    return json.dumps(resume) if isinstance(resume, str) else resume
