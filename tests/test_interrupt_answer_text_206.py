@@ -234,7 +234,13 @@ def test_a_paused_session_answered_later_gets_text(tmp_path, monkeypatch):
 
 
 def _type_on_pty(tmp_path, term, args, steps):
-    """Run the CLI on a real pty; for each ``(wait_for, send)`` step, send once seen."""
+    """Run the CLI on a real pty and answer it: one ``(wait_for, send)`` step at a time.
+
+    A step is sent once its text has appeared and the terminal has then been quiet for
+    a moment, so the CLI is waiting for input. The arrow-key menu flushes pending
+    input when it switches the terminal to raw mode, so a key sent the instant the
+    menu is drawn can be dropped.
+    """
     import pty
     import select
 
@@ -262,6 +268,10 @@ def _type_on_pty(tmp_path, term, args, steps):
             if not ready:
                 if proc.poll() is not None:
                     break
+                if steps and steps[0][0] in out[seen_upto:]:
+                    wait_for, send = steps.pop(0)
+                    seen_upto = out.index(wait_for, seen_upto) + len(wait_for)
+                    os.write(master, send)
                 continue
             try:
                 data = os.read(master, 4096)
@@ -270,10 +280,6 @@ def _type_on_pty(tmp_path, term, args, steps):
             if not data:
                 break
             out += data
-            while steps and steps[0][0] in out[seen_upto:]:
-                wait_for, send = steps.pop(0)
-                seen_upto = out.index(wait_for, seen_upto) + len(wait_for)
-                os.write(master, send)
         proc.wait(timeout=10)
     finally:
         if proc.poll() is None:
