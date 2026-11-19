@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.56 - 2026-11-19
+
+### Fixed
+- **The custom decision prompt shows shapes the approval accepts, and catches the ones
+  it would refuse** (gh #209). On the keyless demo's approval (`ask me`), the prompt
+  hinted a bare `{"type": "respond"}`. Typing it got past the CLI's check, core then
+  refused it (`respond needs a text "message"`), and the refusal came back as a failed
+  turn that dropped you at the main prompt with the approval still waiting. The CLI
+  only treated approvals with `review_configs` (LangChain's HumanInTheLoopMiddleware)
+  as ones core checks; core checks any approval whose value has `action_requests`. The
+  CLI now reads the graph's own pending value and applies core's test to it, so the
+  hint shows `{"type": "respond", "message": "reply"}` and a missing message is refused
+  in place: `... Nothing was sent; try again.`
+- **A decision core still refuses brings the approval menu back.** Core refuses an
+  invalid decision before resuming, so nothing was sent. The CLI used to print it as a
+  turn error with "Re-run with -v" and return to the main prompt. It now shows the
+  reason and asks the approval again.
+
 ## 0.6.55 - 2026-11-17
 
 ### Fixed
