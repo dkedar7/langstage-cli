@@ -2701,7 +2701,7 @@ async def _stream_turn(
                         # and the approval is still pending. Say so in place and ask it
                         # again, rather than failing the turn and dropping the user at
                         # the main prompt with the approval unanswered (gh #209).
-                        refused = str(chunk["error"])[len(_REFUSED_DECISION):].strip()
+                        refused = str(chunk["error"])[len(_REFUSED_DECISION) :].strip()
                         print(f"{RED}⏺ {_escape_controls(refused)}{RESET}")
                         refused_decision = True
                         continue
