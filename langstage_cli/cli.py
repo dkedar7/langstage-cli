@@ -1968,12 +1968,13 @@ def _all_actions_allow(verb: str, num_actions: int, interrupt: Optional[Dict[str
 def _decision_shapes(allowed: List[str], interrupt: Optional[Dict[str, Any]] = None) -> str:
     """One line showing the JSON shape of each allowed decision.
 
-    The fields are LangChain HumanInTheLoopMiddleware's, so other interrupts get the
-    bare ``{"type": ...}`` of each verb.
+    The fields are LangChain HumanInTheLoopMiddleware's. Every interrupt core checks
+    as one (:func:`_is_hitl_request`) gets them, so a shape the hint shows is a shape
+    core accepts (gh #209). Other interrupts get the bare ``{"type": ...}`` of each verb.
     """
     shapes = (
         {}
-        if not _is_middleware_interrupt(interrupt)
+        if not _is_hitl_request(interrupt)
         else {
             "approve": '{"type": "approve"}',
             "reject": '{"type": "reject", "message": "why"}',
@@ -1987,9 +1988,28 @@ def _decision_shapes(allowed: List[str], interrupt: Optional[Dict[str, Any]] = N
     return " | ".join(shapes.get(v, f'{{"type": "{v}"}}') for v in order)
 
 
-def _is_middleware_interrupt(interrupt: Optional[Dict[str, Any]]) -> bool:
-    """Whether the interrupt is LangChain HumanInTheLoopMiddleware's (it has review_configs)."""
-    configs = interrupt.get("review_configs") if isinstance(interrupt, dict) else None
+# Key under which _stream_turn puts the graph's own pending interrupt value on the
+# interrupt payload it hands the approval prompt (gh #209).
+_PENDING_VALUE = "_pending_value"
+
+
+def _is_hitl_request(interrupt: Optional[Dict[str, Any]]) -> bool:
+    """Whether core checks answers to this interrupt as a HITL request (gh #209).
+
+    Core's resume path validates a decision when the graph's pending interrupt value
+    is a dict with an ``action_requests`` list (``langstage_core.resume``), whether
+    or not it carries ``review_configs``. The frame can't tell: core normalizes every
+    interrupt (a legacy ``HumanInterrupt`` list, a plain dict) into ``action_requests``.
+    So the turn loop reads the graph's own value and puts it on the payload under
+    ``_PENDING_VALUE``; this applies core's test to it. Without it (no checkpointer,
+    or more than one interrupt pending) a non-empty ``review_configs`` is the sign.
+    """
+    if not isinstance(interrupt, dict):
+        return False
+    if _PENDING_VALUE in interrupt:
+        value = interrupt[_PENDING_VALUE]
+        return isinstance(value, dict) and isinstance(value.get("action_requests"), list)
+    configs = interrupt.get("review_configs")
     return isinstance(configs, list) and bool(configs)
 
 
@@ -2026,13 +2046,14 @@ def _check_custom_decision(
                 f"allowed: {', '.join(_allowed_verbs(interrupt, i))}."
             )
 
-    # LangChain HumanInTheLoopMiddleware interrupts (they carry review_configs) are
-    # checked by core, with the same rules its resume path enforces (core gh #227).
-    # Other interrupts read their own payload, so only the verb is checked here.
-    if _is_middleware_interrupt(interrupt):
+    # A HITL request is checked by core, with the same rules and against the same
+    # value its resume path checks (core gh #227, gh #209). Other interrupts read
+    # their own payload, so only the verb is checked here.
+    if _is_hitl_request(interrupt):
         from langstage_core import decision_problems
 
-        problems = decision_problems({"decisions": list(items)}, interrupt)
+        target = interrupt.get(_PENDING_VALUE, interrupt)
+        problems = decision_problems({"decisions": list(items)}, target)
         if problems:
             return [], "; ".join(problems) + "."
         return list(items), None
@@ -2594,6 +2615,33 @@ async def _pending_interrupt(agent: Any, thread_id: str) -> bool:
     return any(getattr(task, "interrupts", None) for task in getattr(state, "tasks", ()) or ())
 
 
+async def _pending_interrupt_value(agent: Any, thread_id: str) -> Tuple[bool, Any]:
+    """``(True, value)`` for the thread's one pending interrupt, else ``(False, None)``.
+
+    This is the value core's resume path checks a decision against, before the
+    frame normalizes it for display (gh #209). Like core, only a single pending
+    interrupt is read; with none, several, or no readable state nothing is found.
+    """
+    graph = getattr(agent, "graph", None)
+    if not thread_id or graph is None or not hasattr(graph, "aget_state"):
+        return False, None
+    try:
+        state = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+    except Exception:  # noqa: BLE001 - no checkpointer / no state: nothing to read
+        return False, None
+    tasks = getattr(state, "tasks", None) or ()
+    pending = [i for t in tasks for i in (getattr(t, "interrupts", None) or ())]
+    if len(pending) != 1:
+        return False, None
+    return True, getattr(pending[0], "value", None)
+
+
+# The prefix of the error core raises when it refuses a decision before resuming
+# (``langstage_core.resume.InvalidDecisionError``): nothing was sent, and the same
+# approval is still pending (core gh #227).
+_REFUSED_DECISION = "InvalidDecisionError:"
+
+
 async def _stream_turn(
     agent: Any, message: str, thread_id: str, interactive: bool, verbose: bool
 ) -> tuple[bool, bool, bool]:
@@ -2622,8 +2670,11 @@ async def _stream_turn(
     tool_results: List[str] = []  # results since the last reply text / tool call
     resume = None  # first pass sends the message; later passes carry the decision
 
+    pending_prompt = None  # the last interrupt asked, to ask again if refused (gh #209)
+
     while True:
         has_interrupt = False
+        refused_decision = False
         num_pending_actions = 0
         is_generic_interrupt = False
         first_chunk = True
@@ -2639,6 +2690,21 @@ async def _stream_turn(
                         if spinner:
                             spinner.stop()
                         first_chunk = False
+                    if (
+                        resume is not None
+                        and interactive
+                        and pending_prompt is not None
+                        and chunk.get("status") == "error"
+                        and str(chunk.get("error", "")).startswith(_REFUSED_DECISION)
+                    ):
+                        # Core refused the answer before resuming, so nothing was sent
+                        # and the approval is still pending. Say so in place and ask it
+                        # again, rather than failing the turn and dropping the user at
+                        # the main prompt with the approval unanswered (gh #209).
+                        refused = str(chunk["error"])[len(_REFUSED_DECISION):].strip()
+                        print(f"{RED}⏺ {_escape_controls(refused)}{RESET}")
+                        refused_decision = True
+                        continue
                     print_chunk(chunk, verbose=verbose)
                     if chunk.get("status") == "error":
                         had_error = True
@@ -2664,7 +2730,16 @@ async def _stream_turn(
                 spinner.stop()
             _flush_markdown()  # a stream that ends without `complete` keeps no held text
 
-        if has_interrupt and interactive:
+        if refused_decision and not has_interrupt:
+            num, generic, data = pending_prompt
+            resume = handle_interrupt_input(num, is_generic=generic, interrupt=data)
+        elif has_interrupt and interactive:
+            # Check a custom decision against the value core will check it against,
+            # not the frame's display copy (gh #209).
+            found, value = await _pending_interrupt_value(agent, thread_id)
+            if found and isinstance(interrupt_data, dict):
+                interrupt_data = {**interrupt_data, _PENDING_VALUE: value}
+            pending_prompt = (num_pending_actions, is_generic_interrupt, interrupt_data)
             resume = handle_interrupt_input(
                 num_pending_actions, is_generic=is_generic_interrupt, interrupt=interrupt_data
             )
