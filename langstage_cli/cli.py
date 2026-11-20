@@ -10,6 +10,7 @@ import json
 import os
 import queue
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -1622,10 +1623,53 @@ print_chunk._streaming_reasoning = False
 print_chunk._reasoning_node = None
 
 
+# How long a bare Esc waits for the rest of an escape sequence. Terminals send an arrow
+# key's bytes together, so 50 ms is plenty locally and still fine over ssh; anything
+# slower is treated as a lone Esc (gh #211).
+_ESC_SEQUENCE_TIMEOUT = 0.05
+
+
+def _read_escape_sequence(read_byte, pending) -> str:
+    """Map the bytes after an ``ESC`` to a key name.
+
+    ``pending()`` says whether another byte arrives within the escape timeout, and
+    ``read_byte()`` reads one. A lone Esc (nothing follows) is ``"esc"``. ``ESC [ A`` /
+    ``ESC O A`` (normal and application cursor mode) are ``"up"``, ``... B`` is
+    ``"down"``. Any other sequence (Alt+key, Home, F-keys, modified arrows) is read to
+    its end and ignored (``""``), so its bytes can't leak into the next key.
+    """
+    if not pending():
+        return "esc"
+    ch2 = read_byte()
+    if ch2 not in ("[", "O"):
+        return ""
+    body = ""
+    # A CSI sequence ends at a byte in 0x40-0x7E; parameters (digits, ';') come before.
+    for _ in range(16):
+        if not pending():
+            return ""
+        ch = read_byte()
+        body += ch
+        if "@" <= ch <= "~":
+            break
+    if body == "A":
+        return "up"
+    if body == "B":
+        return "down"
+    return ""
+
+
 def get_key() -> str:
-    """Read a single keypress from stdin (cross-platform)."""
+    """Read a single keypress from stdin (cross-platform).
+
+    Returns ``"up"``, ``"down"``, ``"enter"``, ``"ctrl-c"``, ``"ctrl-d"``, ``"esc"``,
+    the character typed, or ``""`` for a key the menus don't use. A bare Esc returns
+    at once instead of blocking for a second byte, which used to swallow the next
+    keypress (often the Ctrl-C meant to leave, gh #211).
+    """
     if IS_WINDOWS:
-        # Windows implementation using msvcrt
+        # Windows implementation using msvcrt. Special keys come as a \x00 / \xe0
+        # prefix plus a scan code, so a lone \x1b is always Esc.
         ch = msvcrt.getch()
         if ch in (b"\x00", b"\xe0"):  # Special keys (arrows, function keys)
             ch2 = msvcrt.getch()
@@ -1633,40 +1677,61 @@ def get_key() -> str:
                 return "up"
             elif ch2 == b"P":
                 return "down"
-            return ch2.decode("utf-8", errors="ignore")
-        elif ch == b"\r":
+            return ""  # Home, F-keys, ...: a scan code, not a character
+        elif ch in (b"\r", b"\n"):
             return "enter"
         elif ch == b"\x03":  # Ctrl+C
             return "ctrl-c"
+        elif ch in (b"\x04", b"\x1a"):  # Ctrl+D, or Ctrl+Z (the Windows console's EOF)
+            return "ctrl-d"
+        elif ch == b"\x1b":
+            return "esc"
         return ch.decode("utf-8", errors="ignore")
     else:
-        # Unix implementation using termios/tty
+        # Unix implementation using termios/tty. Bytes are read straight from the fd:
+        # sys.stdin's text buffer could hold the rest of an escape sequence where
+        # select() can't see it, which would turn an arrow key into an Esc.
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
+
+        def read_byte() -> str:
+            return os.read(fd, 1).decode("latin-1")
+
+        def pending() -> bool:
+            return bool(select.select([fd], [], [], _ESC_SEQUENCE_TIMEOUT)[0])
+
         try:
             tty.setraw(fd)
-            ch = sys.stdin.read(1)
-            # Handle escape sequences (arrow keys)
+            ch = read_byte()
+            if ch == "":  # end of input
+                return "ctrl-d"
             if ch == "\x1b":
-                ch2 = sys.stdin.read(1)
-                if ch2 == "[":
-                    ch3 = sys.stdin.read(1)
-                    if ch3 == "A":
-                        return "up"
-                    elif ch3 == "B":
-                        return "down"
+                return _read_escape_sequence(read_byte, pending)
             elif ch == "\r" or ch == "\n":
                 return "enter"
             elif ch == "\x03":  # Ctrl+C
                 return "ctrl-c"
+            elif ch == "\x04":  # Ctrl+D
+                return "ctrl-d"
             return ch
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
+# Keys that leave the arrow-key menu without deciding anything, like the dumb-terminal
+# menu's Ctrl-C / end of input: exit 2, the turn stays paused (gh #174, gh #211).
+_MENU_LEAVE_KEYS = ("ctrl-c", "ctrl-d", "esc", "q", "Q")
+
+
 def select_option(options: List[str], prompt: str = "Select an option:") -> int:
     """
     Interactive option selector using arrow keys.
+
+    Up/Down move the highlight, a digit ``1``-``N`` moves it to that option (the dumb
+    terminal menu's numbering), and Enter picks the highlighted option. Ctrl-C,
+    Ctrl-D, Esc and ``q`` leave the menu: exit 2, the turn stays paused. Any other key
+    is ignored. Before gh #211 every key but the arrows was ignored, so typing ``3``
+    then Enter to pick **Exit** approved the action that was highlighted.
 
     Args:
         options: List of option strings to display
@@ -1685,6 +1750,7 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
 
     try:
         print(f"\n{BOLD}{prompt}{RESET}")
+        print(f"{DIM}  ↑/↓ or 1-{num_options} to choose · Enter to confirm · Esc to leave{RESET}")
 
         # Print initial options
         for i, opt in enumerate(options):
@@ -1703,15 +1769,20 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
                 selected -= 1
             elif key == "down" and selected < num_options - 1:
                 selected += 1
+            elif len(key) == 1 and key.isdigit() and 1 <= int(key) <= num_options:
+                selected = int(key) - 1
             elif key == "enter":
                 break
-            elif key == "ctrl-c":
-                # Ctrl-C abandons the prompt the same way the menu's Exit does: nothing
-                # was decided and the turn stays paused on the interrupt, so exit 2
-                # (ADR 0007). It used to exit 0, "turn completed", which let
-                # `langstage-cli ... && next-step` run on an aborted approval (gh #174).
+            elif key in _MENU_LEAVE_KEYS:
+                # Leaving abandons the prompt the same way the menu's Exit does:
+                # nothing was decided and the turn stays paused on the interrupt, so
+                # exit 2 (ADR 0007). Ctrl-C used to exit 0, "turn completed", which let
+                # `langstage-cli ... && next-step` run on an aborted approval (gh #174);
+                # Ctrl-D and Esc were ignored (gh #211).
                 print("\033[?25h", end="")  # Show cursor
                 sys.exit(EXIT_PAUSED)
+            else:
+                continue  # an ignored key: nothing to redraw
 
             # Move cursor up to redraw options
             print(f"\033[{num_options}A", end="")
@@ -2089,7 +2160,7 @@ def print_help():
     print(f"{DIM}{'─' * 40}{RESET}")
     print(f"  {CYAN}Tab{RESET}               Autocomplete commands")
     print(f"  {CYAN}Ctrl+C{RESET}            Exit at any time")
-    print(f"  {CYAN}↑/↓{RESET}               Navigate options")
+    print(f"  {CYAN}↑/↓{RESET}, {CYAN}1-9{RESET}         Choose an approval option ({CYAN}Esc{RESET} leaves)")
     print()
 
 
