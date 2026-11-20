@@ -175,6 +175,7 @@ In the interactive loop:
 - `/reset` (`/restart`) - Reset the session (clear history and start a new thread)
 - `/quit` (`/q`, `/exit`) - Exit
 - **Tab** autocompletes commands; **Ctrl+C** exits
+- At an approval menu, **↑/↓** or a number moves the highlight and **Enter** confirms; **Esc**, **q**, **Ctrl+D** or **Ctrl+C** leave it with the turn still paused (exit 2)
 
 ## Environment Variables
 

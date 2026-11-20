@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.57 - 2026-11-20
+
+### Fixed
+- **The approval menu never approves on a key that doesn't mean "approve"** (gh #211).
+  The arrow-key menu ignored every key but the arrows, Enter and Ctrl-C, and opens with
+  **Approve all actions** highlighted, so typing `3` then Enter to pick **Exit** (the
+  numbering the `TERM=dumb` menu uses) approved the tool call. A digit `1`-`N` now
+  moves the highlight to that option, and Enter confirms it. The menu shows its keys
+  under the question.
+- **Ctrl-D, Esc and `q` leave the approval menu** the way Ctrl-C does: exit 2, with the
+  turn still paused. Ctrl-D used to redraw the menu, and Esc waited for a second byte,
+  which swallowed the next keypress, so the first Ctrl-C after an Esc did nothing.
+- **Keys typed quickly in the approval menu aren't dropped.** Each keypress read put the
+  terminal in raw mode with a flush, which threw away anything already typed, such as
+  the Enter of a quick `3`⏎. The read now switches modes without flushing.
+
 ## 0.6.56 - 2026-11-19
 
 ### Fixed
