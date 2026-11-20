@@ -116,7 +116,9 @@ _ACTION_AGENT = textwrap.dedent(
 )
 
 
-@pytest.mark.parametrize("keys", [("3", "enter"), ("esc",), ("ctrl-d",)], ids=["3-enter", "esc", "ctrl-d"])
+@pytest.mark.parametrize(
+    "keys", [("3", "enter"), ("esc",), ("ctrl-d",)], ids=["3-enter", "esc", "ctrl-d"]
+)
 def test_single_shot_never_resumes_on_a_leave(keys, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_is_a_tty", lambda *a, **k: True)

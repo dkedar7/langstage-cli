@@ -2160,7 +2160,9 @@ def print_help():
     print(f"{DIM}{'─' * 40}{RESET}")
     print(f"  {CYAN}Tab{RESET}               Autocomplete commands")
     print(f"  {CYAN}Ctrl+C{RESET}            Exit at any time")
-    print(f"  {CYAN}↑/↓{RESET}, {CYAN}1-9{RESET}         Choose an approval option ({CYAN}Esc{RESET} leaves)")
+    print(
+        f"  {CYAN}↑/↓{RESET}, {CYAN}1-9{RESET}         Choose an approval option ({CYAN}Esc{RESET} leaves)"
+    )
     print()
 
 
