@@ -1701,7 +1701,9 @@ def get_key() -> str:
             return bool(select.select([fd], [], [], _ESC_SEQUENCE_TIMEOUT)[0])
 
         try:
-            tty.setraw(fd)
+            # TCSANOW, not setraw's default TCSAFLUSH: a flush would throw away keys
+            # typed ahead (the Enter of a quick "3⏎") before this read could see them.
+            tty.setraw(fd, termios.TCSANOW)
             ch = read_byte()
             if ch == "":  # end of input
                 return "ctrl-d"

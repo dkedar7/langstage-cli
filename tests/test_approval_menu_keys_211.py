@@ -176,8 +176,13 @@ def test_get_key_lone_esc_does_not_swallow_the_next_key(monkeypatch):
     # The real get_key over a pty: Esc alone returns "esc", and the Ctrl-C typed after
     # it is still there for the next read (it used to be consumed as the CSI byte).
     import pty
+    import tty
 
     master, slave = pty.openpty()
+    # Raw from the start, as get_key leaves it mid-menu: in the pty's default cooked
+    # mode the line discipline would eat the Ctrl-C byte as a signal before get_key
+    # switched to raw, and the read would block forever.
+    tty.setraw(slave)
     try:
         stdin = os.fdopen(slave, "r", closefd=False)
         monkeypatch.setattr(sys, "stdin", stdin)
