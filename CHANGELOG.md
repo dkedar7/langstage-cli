@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.58 - 2026-11-21
+
+### Fixed
+- **`--show-config` and `/config` show a bare `[agent] spec = "my_agent.py"` the way the
+  run loads it** (gh #213). The run resolves that form against the `langstage.toml`'s
+  directory, but the diagnostics printed it raw, so from a subdirectory they named a
+  file that wasn't there. They now print the resolved path, as they already did for
+  `my_agent.py:graph`, and expand a leading `~`.
+
 ## 0.6.57 - 2026-11-20
 
 ### Fixed

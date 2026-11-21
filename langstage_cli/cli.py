@@ -1105,9 +1105,39 @@ def _reconcile_graph_name(report: str, cfg: Any) -> str:
     return re.sub(r"(?m)^  graph_name\s+=.*$", lambda _m: line, report, count=1)
 
 
+def _with_shown_bare_spec(cfg: Any) -> Any:
+    """``cfg`` with a bare ``file.py`` spec shown the way the run resolves it (gh #213).
+
+    Core rebases a ``file.py:attr`` spec from a toml onto the toml's directory and
+    expands ``~``, but its spec parser needs the ``:attr``, so the CLI's colon-less
+    ``file.py`` form came through untouched. The run makes up for it (the toml dir is
+    the load's base), but ``--show-config`` and ``/config`` printed the raw value: a
+    path that doesn't exist from a subdirectory. This applies core's rule to the bare
+    form, on a copy, so the diagnostic names the file that actually loads.
+    """
+    spec = getattr(cfg, "agent_spec", None)
+    split = _split_py_file_spec(spec.strip()) if isinstance(spec, str) else None
+    if split is None or split[1]:
+        return cfg  # not a bare .py path: core already shows it resolved
+    raw = split[0]
+    file_path = Path(raw).expanduser()
+    toml_dir = cfg.toml_dir_for("agent_spec") if hasattr(cfg, "toml_dir_for") else None
+    if toml_dir is not None and not file_path.anchor:
+        file_path = Path(toml_dir) / file_path
+    elif file_path == Path(raw):
+        return cfg  # nothing to resolve: keep the user's exact spelling
+    shown = copy.copy(cfg)
+    if hasattr(cfg, "_sources"):
+        shown._sources = dict(cfg._sources)
+    shown.agent_spec = str(file_path)
+    return shown
+
+
 def _describe(cfg: Any, **kwargs: Any) -> str:
-    """``cfg.describe(**kwargs)`` showing the graph that actually runs (gh #129)."""
-    return _reconcile_graph_name(cfg.describe(**kwargs), cfg)
+    """``cfg.describe(**kwargs)`` showing the graph that actually runs (gh #129)
+    and the agent file it loads (gh #213)."""
+    shown = _with_shown_bare_spec(cfg)
+    return _reconcile_graph_name(shown.describe(**kwargs), shown)
 
 
 def _split_py_file_spec(spec: str) -> Optional[Tuple[str, str]]:
