@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.59 - 2026-11-22
+
+### Fixed
+- **`-c` no longer hands one agent another agent's conversation** (gh #215). The session
+  index recorded no agent, so `-a b.py -c` resumed agent A's session (tool calls and
+  all) and nothing said so. Each session now records the agent that made it:
+  `--continue` takes this agent's most recent session (sessions saved before this
+  release still count), `--list-sessions` shows each session's agent, and
+  `--resume <id>` of another agent's session notes it on stderr. Resuming a session
+  that is paused at another agent's approval is refused with exit 1, where it used to
+  drop the approval and stack a second message, exit 0.
+
 ## 0.6.58 - 2026-11-21
 
 ### Fixed

@@ -154,6 +154,7 @@ def touch_session(
     first_message: Optional[str] = None,
     *,
     agent_checkpointer: bool = False,
+    agent: Optional[str] = None,
 ) -> None:
     """Bump a thread's ``updated`` timestamp (creating the entry if missing).
 
@@ -163,6 +164,10 @@ def touch_session(
     ``agent_checkpointer`` marks a session whose state lives in the agent's OWN
     checkpointer, not the CLI's store (``"checkpointer": "agent"``), so the session list
     and a resume can say the CLI holds no history for it (gh #128).
+
+    ``agent`` is the resolved agent spec the turn ran (gh #215). It is recorded when the
+    entry is created, or filled into an older entry that has none; an entry that already
+    names an agent keeps it, so the session stays attributed to the agent that made it.
     """
     sessions = load_index(workspace)
     entry = sessions.get(thread_id)
@@ -171,20 +176,61 @@ def touch_session(
         entry = {"created": now, "updated": now, "first_message": _snippet(first_message)}
         if agent_checkpointer:
             entry["checkpointer"] = "agent"
+        if agent:
+            entry["agent"] = agent
         sessions[thread_id] = entry
     else:
         entry["updated"] = now
         if not entry.get("first_message") and first_message:
             entry["first_message"] = _snippet(first_message)
+        if agent and not entry.get("agent"):
+            entry["agent"] = agent
     _save_index(workspace, sessions)
 
 
-def most_recent_thread(workspace: Path) -> Optional[str]:
-    """The most-recently-updated thread id for this workspace, or ``None`` if none."""
+def most_recent_thread(workspace: Path, agent: Optional[str] = None) -> Optional[str]:
+    """The most-recently-updated thread id for this workspace, or ``None`` if none.
+
+    With ``agent``, only sessions recorded for that agent count, plus older entries that
+    record no agent (written before gh #215), so ``--continue`` never picks up a session
+    another agent made.
+    """
     sessions = load_index(workspace)
+    if agent is not None:
+        sessions = {t: e for t, e in sessions.items() if e.get("agent") in (None, "", agent)}
     if not sessions:
         return None
     return max(sessions.items(), key=lambda kv: kv[1].get("updated", 0))[0]
+
+
+def thread_is_paused(workspace: Path, thread_id: str) -> bool:
+    """Whether the thread's latest checkpoint in the CLI's store ends on an ``interrupt()``.
+
+    Read from the store itself, not through a graph, so it works whichever agent is
+    loaded (gh #215): a graph without the interrupting node sees no pending task and
+    would otherwise let a new message stack onto the paused turn. Anything unreadable
+    (no store, no such thread, an agent-owned checkpointer) counts as not paused.
+    """
+    path = sessions_dir() / f"{workspace_key(workspace)}.sqlite"
+    if not path.is_file():
+        return False
+    try:
+        import sqlite3
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            saver = SqliteSaver(conn)
+            saver.is_setup = True  # read-only: the tables exist, never create them
+            tup = saver.get_tuple({"configurable": {"thread_id": thread_id}})
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a store we can't read is "not paused"
+        return False
+    if tup is None:
+        return False
+    return any(w[1] == "__interrupt__" for w in (tup.pending_writes or ()))
 
 
 def resolve_thread(workspace: Path, ref: str) -> Optional[str]:

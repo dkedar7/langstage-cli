@@ -104,8 +104,8 @@ langstage-cli --show-config
 
 # Resume a previous conversation across separate invocations
 langstage-cli "remember: my name is Kedar"   # a fresh, PERSISTED session
-langstage-cli -c "what's my name?"            # continue the most recent session
-langstage-cli --list-sessions                 # list resumable sessions
+langstage-cli -c "what's my name?"            # continue this agent's most recent session
+langstage-cli --list-sessions                 # list resumable sessions, with their agents
 langstage-cli --resume <id>                   # resume a specific one
 ```
 
@@ -128,11 +128,17 @@ Every invocation persists its conversation to a durable, per-workspace store so 
 run can pick it up — the terminal-agent continuity of Claude Code / Codex / Aider,
 without you baking a checkpointer into your own graph:
 
-- `--continue` / `-c` — resume the **most recent** session for this workspace and keep
-  going. If there's no prior session, it just starts a fresh one.
+- `--continue` / `-c` — resume the **most recent** session this agent made in this
+  workspace and keep going. If there's no prior session, it just starts a fresh one.
+  Another agent's sessions are skipped, so trying `--demo` and then your own graph in the
+  same directory doesn't hand your graph the demo's conversation.
 - `--resume <id>` — resume a **specific** session (ids come from `--list-sessions`; a
   bare `--resume` also lists them). A short prefix works if it's unambiguous; an
-  ambiguous one is an error that lists the sessions it matches.
+  ambiguous one is an error that lists the sessions it matches. Resuming another agent's
+  session works but says so; one paused at another agent's approval is refused (exit `1`),
+  since this agent can't answer it.
+- `--list-sessions` shows which agent made each session (`-` for sessions saved before
+  0.6.59, which `-c` still picks up).
 - A plain run with no flag starts a **new** session that is still persisted, so it can be
   continued later.
 - A session left paused at an approval (exit `2`) is resolved before a new message: the
@@ -248,7 +254,8 @@ Options:
   --show-config                   Print the resolved configuration and exit
   -q, --quiet                     Scriptable single-shot output: only the reply
   --verify                        Preflight the agent (one real turn); exit 0/1
-  -c, --continue                  Resume the most recent session for this workspace
+  -c, --continue                  Resume this agent's most recent session for this
+                                  workspace
   --resume [ID]                   Resume a specific session (bare: list them)
   --list-sessions                 List resumable sessions for this workspace
   --persist/--no-persist          Persist this session so it can be continued (default: on)
