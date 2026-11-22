@@ -1183,6 +1183,41 @@ def _absolutize_file_spec(spec: str) -> str:
     return f"{Path(path_part).expanduser().resolve()}{suffix}"
 
 
+def _session_agent_id(spec: str, base_dir: Path, graph_name: str) -> str:
+    """The agent a session is recorded under in the session index (gh #215).
+
+    A file spec becomes its absolute path (resolved against ``base_dir``, the same base
+    the spec was loaded from), so one agent reads alike from any subdirectory; a module
+    spec stays as typed. The graph attribute is always named, so ``agent.py`` and
+    ``agent.py:graph`` are the same agent.
+    """
+    parsed = _split_py_file_spec(spec)
+    if parsed is not None:
+        path = Path(parsed[0]).expanduser()
+        if not path.is_absolute():
+            path = Path(base_dir) / path
+        return f"{path.resolve()}:{graph_name}"
+    module = spec.rsplit(":", 1)[0] if ":" in spec else spec
+    return f"{module}:{graph_name}"
+
+
+def _shown_agent(agent: Optional[str], workspace: Path) -> str:
+    """A recorded agent as the session list and notes print it: a file inside the
+    workspace relative to it, one under the home directory with ``~``."""
+    if not agent:
+        return "-"
+    parsed = _split_py_file_spec(agent)
+    if parsed is None:
+        return agent
+    path, suffix = Path(parsed[0]), parsed[1]
+    for root, prefix in ((Path(workspace), ""), (Path.home(), "~/")):
+        try:
+            return f"{prefix}{path.relative_to(root).as_posix()}{suffix}"
+        except ValueError:
+            continue
+    return agent
+
+
 # Per-value cap on the tool-call card (default output; ``-v`` shows values in full).
 _TOOL_ARG_VALUE_MAX = 50
 
@@ -3454,18 +3489,35 @@ def scaffold_init(target_dir: Path, force: bool = False) -> int:
 
 
 def _resolve_resume_thread(
-    workspace: Path, continue_session: bool, resume_id: Optional[str]
+    workspace: Path,
+    continue_session: bool,
+    resume_id: Optional[str],
+    agent: Optional[str] = None,
 ) -> Optional[str]:
     """The thread ``--continue`` / ``--resume <id>`` targets, or ``None`` for a fresh one.
 
     ``--continue`` with nothing to continue notes it and starts fresh; an unknown
     ``--resume`` id is an error (exit 1).
+
+    With ``agent`` (the loaded agent, gh #215), ``--continue`` takes the most recent
+    session recorded for THIS agent (or one recorded before agents were), never another
+    agent's. ``--resume`` of another agent's session says so; if that session is paused
+    at an approval, it is an error (exit 1): this agent can't answer it, and a new
+    message must not be stacked onto the paused turn.
     """
     thread: Optional[str] = None
     if continue_session:
-        thread = sessions.most_recent_thread(workspace)
+        thread = sessions.most_recent_thread(workspace, agent=agent)
         if thread is None:
-            _status(f"{DIM}⏺ No prior session for this workspace — starting a fresh one.{RESET}")
+            if agent is not None and sessions.most_recent_thread(workspace) is not None:
+                _status(
+                    f"{DIM}⏺ No prior session for this agent in this workspace (only other "
+                    f"agents' sessions, see --list-sessions) — starting a fresh one.{RESET}"
+                )
+            else:
+                _status(
+                    f"{DIM}⏺ No prior session for this workspace — starting a fresh one.{RESET}"
+                )
             return None
     elif resume_id is not None:
         matches = sessions.match_threads(workspace, resume_id)
@@ -3485,6 +3537,24 @@ def _resolve_resume_thread(
             _status(f"{DIM}Run --list-sessions to see available sessions.{RESET}")
             sys.exit(1)
         thread = matches[0]
+        recorded = sessions.load_index(workspace).get(thread, {}).get("agent")
+        if agent is not None and recorded and recorded != agent:
+            shown = sessions.display_id(thread)
+            made_by, current = _shown_agent(recorded, workspace), _shown_agent(agent, workspace)
+            if sessions.thread_is_paused(workspace, thread):
+                _status(
+                    f"{RED}⏺ Error: session {shown} is paused at an approval from {made_by}, "
+                    f"which {current} can't answer.{RESET}"
+                )
+                _status(
+                    f"{DIM}Resume it with its own agent (-a {made_by} --resume {shown}), "
+                    f"or start a new session.{RESET}"
+                )
+                sys.exit(1)
+            _status(
+                f"{YELLOW}note: session {shown} was created by {made_by}; "
+                f"resuming it with {current}.{RESET}"
+            )
     if (
         thread is not None
         and sessions.load_index(workspace).get(thread, {}).get("checkpointer") == "agent"
@@ -3679,6 +3749,9 @@ def _print_sessions(workspace: Path) -> None:
     all_ids = [tid for tid, _ in rows]
     shown = {tid: sessions.display_id(tid, all_ids) for tid in all_ids}
     width = max(len(s) for s in shown.values())
+    # The agent each session was made by (gh #215); "-" for one recorded before that.
+    agents = {tid: _shown_agent(entry.get("agent"), workspace) for tid, entry in rows}
+    agent_width = max(len(a) for a in agents.values())
     for tid, entry in rows:
         when = _format_ts(entry.get("updated"))
         first = entry.get("first_message") or f"{DIM}(no message yet){RESET}"
@@ -3691,8 +3764,14 @@ def _print_sessions(workspace: Path) -> None:
         )
         # A pinned id is shown in full and a minted UUID by its shortest unique prefix, so
         # two sessions never look alike and each shown id works with --resume (gh #188).
-        print(f"  {CYAN}{shown[tid]:<{width}}{RESET}  {DIM}{when}{RESET}  {first}{mark}")
-    print(f"\n{DIM}Resume with:  langstage-cli --resume <id>  (or -c for the most recent){RESET}\n")
+        print(
+            f"  {CYAN}{shown[tid]:<{width}}{RESET}  {DIM}{when}{RESET}  "
+            f"{GRAY}{agents[tid]:<{agent_width}}{RESET}  {first}{mark}"
+        )
+    print(
+        f"\n{DIM}Resume with:  langstage-cli --resume <id>  "
+        f"(or -c for this agent's most recent){RESET}\n"
+    )
 
 
 @click.command(
@@ -3800,7 +3879,7 @@ def _print_sessions(workspace: Path) -> None:
     "continue_session",
     is_flag=True,
     default=False,
-    help="Resume the MOST RECENT session for this workspace and keep the "
+    help="Resume this agent's MOST RECENT session for this workspace and keep the "
     "conversation going (cross-invocation memory). Starts fresh if there is none.",
 )
 @click.option(
@@ -4255,11 +4334,16 @@ def main(
         )
 
         # ---- Resolve the session thread + wire up persistence (gh #102) ----
+        # Each session records the agent that made it, so --continue stays with this
+        # agent's sessions and --resume of another agent's says so (gh #215).
+        session_agent = _session_agent_id(final_spec, spec_base, final_graph_name)
         persist_sqlite_path: Optional[Path] = None
         session_thread: Optional[str] = None
         on_turn = None
         if read_only_resume:
-            session_thread = _resolve_resume_thread(workspace, continue_session, resume_id)
+            session_thread = _resolve_resume_thread(
+                workspace, continue_session, resume_id, agent=session_agent
+            )
             persist_sqlite_path = None
             if session_thread is not None:
                 config_dict["configurable"]["thread_id"] = session_thread
@@ -4282,7 +4366,9 @@ def main(
                 "thread": session_thread,
             }
         elif persist:
-            session_thread = _resolve_resume_thread(workspace, continue_session, resume_id)
+            session_thread = _resolve_resume_thread(
+                workspace, continue_session, resume_id, agent=session_agent
+            )
             if session_thread is None:
                 # Fresh persisted session: honour a pinned [configurable] thread_id if the
                 # user set one (now it actually persists across runs — closing the "I
@@ -4303,6 +4389,7 @@ def main(
                     thread_id,
                     first_message=msg,
                     agent_checkpointer=had_user_checkpointer,
+                    agent=session_agent,
                 )
 
             config_dict["_session_info"] = {
