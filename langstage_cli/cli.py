@@ -164,6 +164,26 @@ def _stdin_is_interactive(stream=None) -> bool:
     return name is not None and _is_msys_pty_name(name)
 
 
+def _stdin_drives_menu(stream=None) -> bool:
+    """Whether the arrow-key approval menu can read keys from stdin (gh #217).
+
+    On POSIX the menu reads the stdin fd through termios, so it needs ``isatty()``.
+    On Windows ``get_key()`` reads keys with ``msvcrt.getch()``, which reads the
+    console, not stdin. So stdin itself has to be that console. ``NUL`` passes
+    ``isatty()`` but isn't one: it used to reach the menu, and ``getch()`` then
+    waited forever for keys nobody would type. A mintty / Git Bash pty is a pipe that
+    ``getch()`` can't read either, so it stays "not a terminal" for the menu, though
+    it does count as interactive for the REPL's own line input. If the console check
+    can't run, the ``isatty()`` answer stands.
+    """
+    stream = sys.stdin if stream is None else stream
+    tty = _is_a_tty(stream)
+    if not IS_WINDOWS or not tty:
+        return tty
+    console = _win_is_console(stream)
+    return tty if console is None else console
+
+
 def _disable_ansi() -> None:
     """Blank every ANSI constant so nothing colorized reaches a pipe, a file or a
     ``NO_COLOR`` terminal (gh #172).
@@ -1943,8 +1963,9 @@ def handle_interrupt_input(
     # printed, and fail loudly rather than auto-approving: an interrupt() is a request
     # for human review, so silently approving an action nobody saw is worse than
     # stopping. `--no-interactive` remains the documented way to opt into
-    # auto-approval, and the message points at it. (gh #86)
-    if not _is_a_tty(sys.stdin):
+    # auto-approval, and the message points at it. (gh #86) On Windows `<NUL` passes
+    # isatty() but can't feed the menu's msvcrt.getch(), so it's checked too (gh #217).
+    if not _stdin_drives_menu():
         print(
             "Error: approval required but stdin is not a terminal.\n"
             "Re-run with --no-interactive to auto-approve pending actions.",
