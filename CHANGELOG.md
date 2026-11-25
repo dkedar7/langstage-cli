@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.60 - 2026-11-25
+
+### Fixed
+- **On Windows, a run that needs an approval exits 2 when stdin is `NUL`, instead of
+  hanging** (gh #217). `NUL` passes `isatty()`, so `langstage-cli "…" <NUL` (and Task
+  Scheduler, services, CI runners, `subprocess.run(..., stdin=DEVNULL)`) reached the
+  arrow-key menu, whose `msvcrt.getch()` reads the console and waited forever. The
+  guard now checks that stdin is a console that can drive the menu, so these runs print
+  `Error: approval required but stdin is not a terminal.` and exit 2, as a pipe does.
+  A real console is unchanged, and a mintty / Git Bash pty still gets the same clean
+  exit 2 at an approval.
+
 ## 0.6.59 - 2026-11-22
 
 ### Fixed
