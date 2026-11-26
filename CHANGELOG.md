@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.61 - 2026-11-26
+
+### Fixed
+- **Approvals can be answered in a Git Bash / mintty terminal on Windows** (gh #219).
+  The REPL ran there, but the arrow-key approval menu reads keys with
+  `msvcrt.getch()`, which can't read a mintty pty, so the first approval exited 2. It
+  now shows the typed menu instead: a numbered list and `Choose 1-N [1]:`. Type the
+  number, or a word that starts one option's name (`a`/`approve`, `r`/`reject`,
+  `e`/`exit`); Enter picks the first option, and `q`, Ctrl-C or end of input leave
+  with exit 2, as before. The typed menu (also used on dumb terminals) accepts the
+  same words everywhere. `NUL` and pipes still exit 2 (gh #217), and a real console
+  keeps the arrow-key menu.
+
 ## 0.6.60 - 2026-11-25
 
 ### Fixed

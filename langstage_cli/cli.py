@@ -1890,12 +1890,18 @@ def select_option(options: List[str], prompt: str = "Select an option:") -> int:
 
 
 def _select_option_typed(options: List[str], prompt: str) -> int:
-    """The approval menu for a dumb terminal: a numbered list and a typed choice.
+    """The approval menu as a numbered list and a typed choice.
 
     The arrow-key menu redraws itself with cursor-up and line-clear escapes, which a
     dumb terminal prints as literal text, and editor shells (Emacs ``M-x shell``) send
-    whole lines, not keypresses. Enter alone picks the first option. Ctrl-C or EOF
-    abandons the prompt the same way the arrow-key menu does: exit 2, paused. (gh #182)
+    whole lines, not keypresses (gh #182). A mintty / Git Bash pty on Windows feeds
+    lines to stdin but not the keypresses ``msvcrt.getch()`` reads, so it gets this
+    menu too (gh #219).
+
+    A choice is the option's number, or a word that starts exactly one option's label
+    (``a`` or ``approve`` for "Approve all actions", ``r``, ``e`` ...). Enter alone
+    picks the first option. ``q``, Ctrl-C or end of input abandon the prompt the same
+    way the arrow-key menu's Esc does: exit 2, paused.
     """
     print(f"\n{prompt}")
     for i, opt in enumerate(options, 1):
@@ -1910,7 +1916,14 @@ def _select_option_typed(options: List[str], prompt: str) -> int:
             return 0
         if raw.isdigit() and 1 <= int(raw) <= len(options):
             return int(raw) - 1
-        print(f"Enter a number from 1 to {len(options)}.")
+        word = raw.lower()
+        if word in ("q", "quit"):
+            print()
+            sys.exit(EXIT_PAUSED)
+        matches = [i for i, opt in enumerate(options) if opt.lower().startswith(word)]
+        if len(matches) == 1:
+            return matches[0]
+        print(f"Enter a number from 1 to {len(options)}, or the start of an option's name.")
 
 
 def _prompt_line(prompt: str) -> str:
@@ -1965,7 +1978,10 @@ def handle_interrupt_input(
     # stopping. `--no-interactive` remains the documented way to opt into
     # auto-approval, and the message points at it. (gh #86) On Windows `<NUL` passes
     # isatty() but can't feed the menu's msvcrt.getch(), so it's checked too (gh #217).
-    if not _stdin_drives_menu():
+    # A mintty / Git Bash pty is a person at a terminal whose keypresses getch() can't
+    # read either, but it does feed lines, so it gets the typed menu (gh #219).
+    typed = not _stdin_drives_menu() and _stdin_is_interactive()
+    if not typed and not _stdin_drives_menu():
         print(
             "Error: approval required but stdin is not a terminal.\n"
             "Re-run with --no-interactive to auto-approve pending actions.",
@@ -1973,6 +1989,7 @@ def handle_interrupt_input(
         )
         # The run is fine but paused on human input: the family "paused" code (ADR 0007).
         sys.exit(EXIT_PAUSED)
+    pick = _select_option_typed if typed else select_option
 
     if is_generic:
         # A generic interrupt() asks for an arbitrary value, not tool approval, so
@@ -1982,7 +1999,7 @@ def handle_interrupt_input(
         # case, where the user types `Alice` and the agent must receive `"Alice"`,
         # not an envelope. What was typed is the answer, as text (gh #206).
         options = ["Provide a response", "Exit"]
-        choice = select_option(options, "How would you like to respond?")
+        choice = pick(options, "How would you like to respond?")
         if choice != 0:
             sys.exit(EXIT_PAUSED)  # left while paused on the interrupt (ADR 0007)
         print(
@@ -2003,7 +2020,7 @@ def handle_interrupt_input(
     options = [label for label, _ in entries]
 
     while True:
-        action = entries[select_option(options, "How would you like to proceed?")][1]
+        action = entries[pick(options, "How would you like to proceed?")][1]
 
         if action in ("approve", "reject"):
             return {"decisions": [{"type": action} for _ in range(num_actions)]}

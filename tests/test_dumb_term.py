@@ -96,7 +96,7 @@ def test_menu_asks_again_on_a_bad_choice(dumb, monkeypatch):
     with redirect_stdout(buf):
         assert cli.select_option(["Approve", "Reject"]) == 1
     assert len(prompts) == 3
-    assert buf.getvalue().count("Enter a number from 1 to 2.") == 2
+    assert buf.getvalue().count("Enter a number from 1 to 2, or the start of an option's name.") == 2
 
 
 @pytest.mark.parametrize("abort", [KeyboardInterrupt(), EOFError()], ids=["ctrl-c", "eof"])
